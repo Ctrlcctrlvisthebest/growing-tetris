@@ -1,8 +1,8 @@
 const COLS = 10;
 const ROWS = 20;
 const CELL = 30;
-const BOARD_X = 160;
-const BOARD_Y = 60;
+const BOARD_X = 100;
+const BOARD_Y = 50;
 const PREVIEW_COUNT = 5;
 
 const SHAPES = {
@@ -23,7 +23,7 @@ const COLORS = {
 let board;
 let currentPiece;
 let nextQueue = [];
-let heldType = null;
+let heldPiece = null;
 let canHold = true;
 let score = 0;
 let piecesLocked = 0;
@@ -32,7 +32,7 @@ let fallCounter = 0;
 let framesPerFall = 30;
 
 function setup() {
-  const canvas = createCanvas(620, 700);
+  const canvas = createCanvas(500, 700);
   canvas.parent('game-canvas');
   frameRate(60);
   textFont('monospace');
@@ -41,8 +41,7 @@ function setup() {
 }
 
 function draw() {
-  background('#0c0f19');
-  drawBackdrop();
+  background(0);
   board.draw();
   currentPiece.draw();
 
@@ -59,30 +58,19 @@ function draw() {
   drawInterface();
 }
 
-function drawBackdrop() {
-  noStroke();
-  fill(143, 117, 255, 18);
-  circle(70, 125, 190);
-  fill(182, 243, 72, 12);
-  circle(555, 570, 230);
-}
-
 class Board {
   constructor() {
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   }
 
   draw() {
-    noStroke();
-    fill('#151927');
-    rect(BOARD_X - 6, BOARD_Y - 6, COLS * CELL + 12, ROWS * CELL + 12, 9);
     for (let row = 0; row < ROWS; row += 1) {
       for (let col = 0; col < COLS; col += 1) {
         const value = this.grid[row][col];
-        fill(value || '#10131d');
-        stroke(value ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.045)');
+        fill(value || 20);
+        stroke(200);
         strokeWeight(1);
-        rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL, 3);
+        rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL);
       }
     }
   }
@@ -211,18 +199,15 @@ class Piece {
     fill(c);
     stroke(255, 235);
     strokeWeight(2);
-    rect(BOARD_X + (this.x + this.warning[0]) * CELL, BOARD_Y + (this.y + this.warning[1]) * CELL, CELL, CELL, 3);
+    rect(BOARD_X + (this.x + this.warning[0]) * CELL, BOARD_Y + (this.y + this.warning[1]) * CELL, CELL, CELL);
   }
 }
 
 function drawCell(col, row, cellColor) {
   fill(cellColor);
-  stroke('rgba(255,255,255,.25)');
+  stroke(50);
   strokeWeight(1);
-  rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL, 3);
-  noStroke();
-  fill(255, 28);
-  rect(BOARD_X + col * CELL + 4, BOARD_Y + row * CELL + 4, CELL - 8, 5, 2);
+  rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL);
 }
 
 function fillNextQueue() {
@@ -249,18 +234,33 @@ function lockAndSpawn() {
 
 function holdCurrentPiece() {
   if (gameOver || !canHold) return;
-  const outgoingType = currentPiece.type;
-  if (heldType === null) {
-    heldType = outgoingType;
+  const outgoingPiece = snapshotPiece(currentPiece);
+  if (heldPiece === null) {
+    heldPiece = outgoingPiece;
     currentPiece = takeNextPiece();
   } else {
-    const incomingType = heldType;
-    heldType = outgoingType;
-    currentPiece = new Piece(incomingType);
+    const incomingPiece = heldPiece;
+    heldPiece = outgoingPiece;
+    currentPiece = restorePiece(incomingPiece);
   }
   canHold = false;
   fallCounter = 0;
   if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) gameOver = true;
+}
+
+function snapshotPiece(piece) {
+  return {
+    type: piece.type,
+    color: piece.color,
+    shape: piece.shape.map(([x, y]) => [x, y]),
+  };
+}
+
+function restorePiece(savedPiece) {
+  const piece = new Piece(savedPiece.type);
+  piece.color = savedPiece.color;
+  piece.shape = savedPiece.shape.map(([x, y]) => [x, y]);
+  return piece;
 }
 
 function hardDrop() {
@@ -272,7 +272,7 @@ function hardDrop() {
 function restartGame() {
   board = new Board();
   nextQueue = [];
-  heldType = null;
+  heldPiece = null;
   canHold = true;
   score = 0;
   piecesLocked = 0;
@@ -283,41 +283,49 @@ function restartGame() {
 }
 
 function drawInterface() {
-  drawPanelTitle('HOLD', 24, 78);
-  if (heldType) drawMiniPiece(heldType, 26, 102, 16);
+  drawPanelTitle('Hold:', 20, 55);
+  if (heldPiece) drawMiniShape(heldPiece.shape, heldPiece.color, 20, 75, 15);
   if (!canHold) {
-    noStroke(); fill(157, 165, 189, 130); textSize(9); text('USED', 26, 180);
+    noStroke(); fill(150); textSize(10); text('USED', 20, 165);
   }
 
-  drawPanelTitle('NEXT', 500, 78);
-  nextQueue.forEach((type, index) => drawMiniPiece(type, 500, 100 + index * 90, 15));
+  drawPanelTitle('Next:', 405, 55);
+  nextQueue.forEach((type, index) => drawMiniPiece(type, 405, 78 + index * 82, 15));
 
   noStroke();
-  fill('#f7f8ff');
+  fill(255);
   textAlign(LEFT, BASELINE);
-  textStyle(BOLD);
+  textStyle(NORMAL);
+  textSize(20);
+  text(`Score: ${score}`, 30, 30);
   textSize(14);
-  text(`SCORE  ${String(score).padStart(5, '0')}`, BOARD_X, 34);
-  textAlign(RIGHT, BASELINE);
-  fill('#b6f348');
-  text(`GROW ×${Math.floor(piecesLocked / 5) + 1}`, BOARD_X + COLS * CELL, 34);
+  text(`Growth speed: ${Math.floor(piecesLocked / 5) + 1}`, 365, 30);
 
   if (gameOver) {
-    noStroke(); fill(6, 8, 14, 225); rect(BOARD_X, BOARD_Y + 215, COLS * CELL, 170, 10);
-    textAlign(CENTER, CENTER); fill('#b6f348'); textSize(11); text('RUN ENDED', BOARD_X + 150, BOARD_Y + 252);
-    fill('#f7f8ff'); textSize(27); text('GAME OVER', BOARD_X + 150, BOARD_Y + 294);
-    fill('#9da5bd'); textSize(11); text('按 R 或点击此处重新开始', BOARD_X + 150, BOARD_Y + 335);
+    noStroke(); fill(0, 190); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 100);
+    textAlign(CENTER, CENTER); fill(255); textSize(28); text('GAME OVER', width / 2, BOARD_Y + 275);
+    textSize(14); text('Press R to restart', width / 2, BOARD_Y + 310);
     textAlign(LEFT, BASELINE);
   }
 }
 
 function drawPanelTitle(label, x, y) {
-  noStroke(); fill('#9da5bd'); textStyle(BOLD); textSize(10); textAlign(LEFT, BASELINE); text(label, x, y);
+  noStroke(); fill(255); textStyle(NORMAL); textSize(20); textAlign(LEFT, BASELINE); text(label, x, y);
 }
 
 function drawMiniPiece(type, x, y, size) {
-  noStroke(); fill(COLORS[type]);
-  SHAPES[type].forEach(([dx, dy]) => rect(x + dx * size, y + dy * size, size - 2, size - 2, 2));
+  drawMiniShape(SHAPES[type], COLORS[type], x, y, size);
+}
+
+function drawMiniShape(shape, shapeColor, x, y, size) {
+  const minX = Math.min(...shape.map(([dx]) => dx));
+  const minY = Math.min(...shape.map(([, dy]) => dy));
+  noStroke();
+  fill(shapeColor);
+  shape.forEach(([dx, dy]) => {
+    stroke(50);
+    rect(x + (dx - minX) * size, y + (dy - minY) * size, size, size);
+  });
 }
 
 function handleHeldKeys() {
@@ -335,7 +343,7 @@ function keyPressed() {
 }
 
 function mousePressed() {
-  if (gameOver && mouseX >= BOARD_X && mouseX <= BOARD_X + COLS * CELL && mouseY >= BOARD_Y + 215 && mouseY <= BOARD_Y + 385) restartGame();
+  if (gameOver && mouseX >= BOARD_X && mouseX <= BOARD_X + COLS * CELL && mouseY >= BOARD_Y + 235 && mouseY <= BOARD_Y + 335) restartGame();
 }
 
 function bindTouchControls() {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#090b13" />
+    <meta name="theme-color" content="#000000" />
     <meta name="description" content="会在下落过程中不断生长的俄罗斯方块。" />
     <title>Growing Tetris · 生长俄罗斯方块</title>
     <link rel="stylesheet" href="style.css" />
@@ -11,34 +11,16 @@
     <script src="sketch.js" defer></script>
   </head>
   <body>
-    <main class="page-shell">
-      <header class="hero">
-        <p class="eyebrow">GROWING TETRIS</p>
-        <h1>俄罗斯方块，<span>但它会生长。</span></h1>
-        <p class="subtitle">在提示格亮起后，正在下落的结构会长出新的方块。坚持越久，生长越快。</p>
-      </header>
-
-      <section class="game-card" aria-label="生长俄罗斯方块游戏">
-        <div id="game-canvas" class="canvas-wrap"></div>
-
-        <div class="touch-controls" aria-label="触控操作">
-          <button data-action="left" aria-label="向左移动">←</button>
-          <button data-action="rotate" aria-label="旋转">↻</button>
-          <button data-action="right" aria-label="向右移动">→</button>
-          <button data-action="down" aria-label="向下移动">↓</button>
-          <button data-action="drop" aria-label="直接落下" class="wide">DROP</button>
-          <button data-action="hold" aria-label="存储或交换方块" class="accent">HOLD</button>
-        </div>
-      </section>
-
-      <section class="instructions" aria-label="操作说明">
-        <div><kbd>←</kbd><kbd>→</kbd><span>移动</span></div>
-        <div><kbd>↑</kbd><span>旋转</span></div>
-        <div><kbd>↓</kbd><span>加速</span></div>
-        <div><kbd>SPACE</kbd><span>直接落下</span></div>
-        <div><kbd>C</kbd><span>存储 / 交换</span></div>
-        <div><kbd>R</kbd><span>重新开始</span></div>
-      </section>
+    <main class="game-shell" aria-label="生长俄罗斯方块游戏">
+      <div id="game-canvas"></div>
+      <div class="touch-controls" aria-label="触控操作">
+        <button data-action="left" aria-label="向左移动">←</button>
+        <button data-action="rotate" aria-label="旋转">↻</button>
+        <button data-action="right" aria-label="向右移动">→</button>
+        <button data-action="down" aria-label="向下移动">↓</button>
+        <button data-action="drop" aria-label="直接落下">DROP</button>
+        <button data-action="hold" aria-label="存储或交换方块">HOLD</button>
+      </div>
     </main>
   </body>
 </html>
