@@ -36,11 +36,13 @@ let fallCounter = 0;
 let hardMode = false;
 let hardOperationCount = 0;
 let growthSpeed = 3;
+let directedGrowth = false;
 let freezeItems = 0;
 let freezeFramesRemaining = 0;
 let modeButton;
 let speedSlider;
 let speedOutput;
+let directedGrowthCheckbox;
 let freezeButton;
 
 function setup() {
@@ -49,7 +51,7 @@ function setup() {
   frameRate(60);
   textFont('monospace');
   cacheControls();
-  bindGrowthSpeedControl();
+  bindGrowthControls();
   restartGame();
   bindTouchControls();
 }
@@ -162,8 +164,13 @@ class Piece {
     this.shape = rotated;
     this.x += kick;
     if (this.warning) {
-      for (let turn = 0; turn < clockwiseTurns; turn += 1) {
-        this.warning = [-this.warning[1], this.warning[0]];
+      if (directedGrowth) {
+        this.warning = null;
+        this.chooseWarning();
+      } else {
+        for (let turn = 0; turn < clockwiseTurns; turn += 1) {
+          this.warning = [-this.warning[1], this.warning[0]];
+        }
       }
     }
     this.revalidateWarning();
@@ -200,7 +207,9 @@ class Piece {
   }
 
   chooseWarning() {
-    const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const directions = directedGrowth
+      ? [[1, 0]]
+      : [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const candidates = [];
     const seen = new Set();
     this.shape.forEach(([x, y]) => {
@@ -356,6 +365,7 @@ function cacheControls() {
   modeButton = document.querySelector('[data-action="mode"]');
   speedSlider = document.querySelector('#growth-speed');
   speedOutput = document.querySelector('#growth-speed-value');
+  directedGrowthCheckbox = document.querySelector('#directed-growth');
   freezeButton = document.querySelector('[data-action="freeze"]');
 }
 
@@ -368,13 +378,24 @@ function updateModeButton() {
   if (speedSlider) speedSlider.disabled = hardMode;
 }
 
-function bindGrowthSpeedControl() {
+function bindGrowthControls() {
   if (!speedSlider || !speedOutput) return;
 
   growthSpeed = Number(speedSlider.value);
   speedSlider.addEventListener('input', () => {
     growthSpeed = Number(speedSlider.value);
     speedOutput.value = String(growthSpeed);
+  });
+
+  if (!directedGrowthCheckbox) return;
+  directedGrowth = directedGrowthCheckbox.checked;
+  directedGrowthCheckbox.addEventListener('change', () => {
+    directedGrowth = directedGrowthCheckbox.checked;
+    const hadWarning = Boolean(currentPiece?.warning);
+    currentPiece.warning = null;
+    if (hadWarning || (hardMode && hardOperationCount % 4 !== 0)) {
+      currentPiece.chooseWarning();
+    }
   });
 }
 
@@ -440,7 +461,7 @@ function performOperation(action) {
 
 function drawInterface() {
   drawPanelTitle('Hold:', 20, 55);
-  if (heldPiece) drawMiniShape(heldPiece.shape, heldPiece.color, 20, 75, 15);
+  if (heldPiece) drawMiniShape(heldPiece.shape, COLORS[heldPiece.type], 20, 75, 15);
   if (!canHold) {
     noStroke(); fill(150); textSize(10); text('USED', 20, 165);
   }

@@ -106,6 +106,29 @@ body {
   cursor: not-allowed;
 }
 
+.directed-growth-control {
+  position: absolute;
+  z-index: 2;
+  top: 37%;
+  left: 2%;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 17%;
+  max-width: 84px;
+  color: #bbb;
+  font: 7px/1.15 Arial, sans-serif;
+  cursor: pointer;
+}
+
+.directed-growth-control input {
+  width: 10px;
+  height: 10px;
+  margin: 0;
+  accent-color: #fff;
+  flex: 0 0 auto;
+}
+
 .touch-controls {
   display: none;
   grid-template-columns: repeat(3, 1fr);
@@ -174,6 +197,7 @@ body {
 }
 
 @media (pointer: coarse), (max-width: 560px) {
+  .directed-growth-control { font-size: 8px; }
   .touch-controls { display: grid; }
   .desktop-controls { display: none; }
 }
