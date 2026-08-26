@@ -1,48 +1,50 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#000000" />
-    <meta name="description" content="会在下落过程中不断生长的俄罗斯方块。" />
-    <title>Growing Tetris · 生长俄罗斯方块</title>
+    <meta name="description" content="A Tetris game where falling pieces keep growing." />
+    <title>Growing Tetris</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.min.js"></script>
     <script src="sketch.js" defer></script>
   </head>
   <body>
-    <main class="game-shell" aria-label="生长俄罗斯方块游戏">
-      <div id="game-canvas"></div>
-      <label class="growth-control" for="growth-speed">
-        <span>生长速度</span>
-        <small>慢</small>
-        <input id="growth-speed" type="range" min="1" max="10" value="3" step="1" />
-        <small>快</small>
-        <output id="growth-speed-value" for="growth-speed">3</output>
-      </label>
-      <div class="touch-controls" aria-label="触控操作">
-        <button data-action="rotate-ccw" aria-label="逆时针旋转">↺</button>
-        <button data-action="rotate" aria-label="顺时针旋转">↻</button>
-        <button data-action="rotate-180" aria-label="旋转180度">180°</button>
-        <button data-action="left" aria-label="向左移动">←</button>
-        <button data-action="right" aria-label="向右移动">→</button>
-        <button data-action="down" aria-label="向下移动">↓</button>
-        <button data-action="drop" aria-label="直接落下">DROP</button>
-        <button data-action="hold" aria-label="存储或交换方块">HOLD</button>
-        <button data-action="freeze" aria-label="使用停止生长道具">FREEZE ×0</button>
-        <button data-action="mode" aria-label="进入或退出困难模式">START HARD MODE</button>
+    <main class="game-shell" aria-label="Growing Tetris game">
+      <div class="canvas-stage">
+        <div id="game-canvas"></div>
+        <label class="growth-control" for="growth-speed">
+          <span>Growth</span>
+          <output id="growth-speed-value" for="growth-speed">3</output>
+          <input id="growth-speed" type="range" min="1" max="10" value="3" step="1" />
+          <small>Slow</small>
+          <small>Fast</small>
+        </label>
       </div>
-      <div class="desktop-controls" aria-label="电脑键盘操作说明">
-        <span><kbd>←</kbd><kbd>→</kbd> 移动</span>
-        <span><kbd>↓</kbd> 加速</span>
-        <span><kbd>↑</kbd> 顺时针</span>
-        <span><kbd>Z</kbd> 逆时针</span>
-        <span><kbd>X</kbd> 旋转180°</span>
-        <span><kbd>SPACE</kbd> 直接落下</span>
-        <span><kbd>C</kbd> 存储/交换</span>
-        <span><kbd>F</kbd> 冻结生长</span>
-        <span><kbd>H</kbd> 困难模式</span>
-        <span><kbd>R</kbd> 重开</span>
+      <div class="touch-controls" aria-label="Touch controls">
+        <button data-action="rotate-ccw" aria-label="Rotate counterclockwise">↺</button>
+        <button data-action="rotate" aria-label="Rotate clockwise">↻</button>
+        <button data-action="rotate-180" aria-label="Rotate 180 degrees">180°</button>
+        <button data-action="left" aria-label="Move left">←</button>
+        <button data-action="right" aria-label="Move right">→</button>
+        <button data-action="down" aria-label="Soft drop">↓</button>
+        <button data-action="drop" aria-label="Hard drop">DROP</button>
+        <button data-action="hold" aria-label="Hold or swap piece">HOLD</button>
+        <button data-action="freeze" aria-label="Use growth freeze item">FREEZE ×0</button>
+        <button data-action="mode" aria-label="Enter or exit hard mode">START HARD MODE</button>
+      </div>
+      <div class="desktop-controls" aria-label="Keyboard controls">
+        <span><kbd>←</kbd><kbd>→</kbd> Move</span>
+        <span><kbd>↓</kbd> Soft drop</span>
+        <span><kbd>↑</kbd> Rotate CW</span>
+        <span><kbd>Z</kbd> Rotate CCW</span>
+        <span><kbd>X</kbd> Rotate 180°</span>
+        <span><kbd>SPACE</kbd> Hard drop</span>
+        <span><kbd>C</kbd> Hold / swap</span>
+        <span><kbd>F</kbd> Freeze growth</span>
+        <span><kbd>H</kbd> Hard mode</span>
+        <span><kbd>R</kbd> Restart</span>
       </div>
     </main>
   </body>

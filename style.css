@@ -28,25 +28,77 @@ body {
   touch-action: none;
 }
 
+.canvas-stage { position: relative; }
+
 .growth-control {
+  position: absolute;
+  z-index: 2;
+  top: 31%;
+  left: 2%;
   display: grid;
-  grid-template-columns: auto auto 1fr auto 24px;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "title value"
+    "slider slider"
+    "slow fast";
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-top: 1px solid #333;
-  border-bottom: 1px solid #333;
+  gap: 2px;
+  width: 15%;
+  max-width: 74px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #fff;
-  font-size: 12px;
+  font-size: 7px;
 }
 
-.growth-control small { color: #999; }
-.growth-control output { color: #fff; font: bold 12px/1 monospace; text-align: center; }
+.growth-control span { grid-area: title; }
+.growth-control small { color: #888; font-size: 6px; }
+.growth-control small:first-of-type { grid-area: slow; }
+.growth-control small:last-of-type { grid-area: fast; text-align: right; }
+.growth-control output { grid-area: value; color: #fff; font: bold 7px/1 monospace; text-align: right; }
 
 .growth-control input {
+  grid-area: slider;
   width: 100%;
-  accent-color: #fff;
+  height: 9px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
   cursor: pointer;
+}
+
+.growth-control input::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 1px;
+  background: #777;
+}
+
+.growth-control input::-webkit-slider-thumb {
+  width: 9px;
+  height: 9px;
+  margin-top: -3.5px;
+  border: 0;
+  border-radius: 50%;
+  -webkit-appearance: none;
+  background: #fff;
+}
+
+.growth-control input::-moz-range-track {
+  height: 2px;
+  border: 0;
+  border-radius: 1px;
+  background: #777;
+}
+
+.growth-control input::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
 }
 
 .growth-control input:disabled {
