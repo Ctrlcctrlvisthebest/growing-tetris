@@ -32,12 +32,17 @@ let fallCounter = 0;
 let framesPerFall = 30;
 let hardMode = false;
 let hardOperationCount = 0;
+let growthSpeed = 3;
+let freezeItems = 0;
+let freezeFramesRemaining = 0;
+const FREEZE_DURATION_FRAMES = 8 * 60;
 
 function setup() {
   const canvas = createCanvas(500, 700);
   canvas.parent('game-canvas');
   frameRate(60);
   textFont('monospace');
+  bindGrowthSpeedControl();
   restartGame();
   bindTouchControls();
 }
@@ -49,7 +54,13 @@ function draw() {
 
   if (!gameOver) {
     handleHeldKeys();
-    if (!hardMode) currentPiece.updateGrowth();
+    if (freezeFramesRemaining > 0) {
+      freezeFramesRemaining -= 1;
+      currentPiece.warning = null;
+      if (freezeFramesRemaining % 15 === 0) updateFreezeButton();
+    } else if (!hardMode) {
+      currentPiece.updateGrowth();
+    }
     fallCounter += 1;
     if (fallCounter >= framesPerFall) {
       fallCounter = 0;
@@ -155,7 +166,7 @@ class Piece {
   }
 
   updateGrowth() {
-    const interval = Math.max(70, 210 - piecesLocked * 7);
+    const interval = Math.max(35, 330 - growthSpeed * 24 - piecesLocked * 7);
     this.growthCounter += 1;
     if (!this.warning && this.growthCounter >= interval - this.warningFrames) this.chooseWarning();
     if (this.growthCounter >= interval) {
@@ -243,28 +254,42 @@ function lockAndSpawn() {
   board.lock(currentPiece);
   const lines = board.clearLines();
   score += lines * lines * 100;
+  freezeItems += lines;
+  if (lines > 0) updateFreezeButton();
   piecesLocked += 1;
   currentPiece = takeNextPiece();
   canHold = true;
   fallCounter = 0;
-  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) gameOver = true;
-  if (hardMode && hardOperationCount % 2 === 1 && !gameOver) currentPiece.chooseWarning();
+  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) endGame();
+  if (hardMode && hardOperationCount % 4 !== 0 && !gameOver && !isGrowthFrozen()) currentPiece.chooseWarning();
 }
 
 function holdCurrentPiece() {
   if (gameOver || !canHold) return;
   const outgoingPiece = snapshotPiece(currentPiece);
+  let incomingPiece;
+  let queueBeforeHold = null;
+
   if (heldPiece === null) {
-    heldPiece = outgoingPiece;
-    currentPiece = takeNextPiece();
+    queueBeforeHold = [...nextQueue];
+    incomingPiece = takeNextPiece();
   } else {
-    const incomingPiece = heldPiece;
-    heldPiece = outgoingPiece;
-    currentPiece = restorePiece(incomingPiece);
+    incomingPiece = restorePiece(heldPiece);
   }
+
+  // A grown or rotated held structure can have negative offsets or be much
+  // wider than its original tetromino. Only commit the swap after a safe,
+  // centered spawn position has been found.
+  if (!board.isValid(incomingPiece, incomingPiece.x, incomingPiece.y)) {
+    if (queueBeforeHold) nextQueue = queueBeforeHold;
+    return false;
+  }
+
+  heldPiece = outgoingPiece;
+  currentPiece = incomingPiece;
   canHold = false;
   fallCounter = 0;
-  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) gameOver = true;
+  return true;
 }
 
 function snapshotPiece(piece) {
@@ -279,7 +304,19 @@ function restorePiece(savedPiece) {
   const piece = new Piece(savedPiece.type);
   piece.color = savedPiece.color;
   piece.shape = savedPiece.shape.map(([x, y]) => [x, y]);
+  positionPieceAtSpawn(piece);
   return piece;
+}
+
+function positionPieceAtSpawn(piece) {
+  const xs = piece.shape.map(([x]) => x);
+  const ys = piece.shape.map(([, y]) => y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const pieceWidth = maxX - minX + 1;
+  piece.x = Math.floor((COLS - pieceWidth) / 2) - minX;
+  piece.y = -minY;
 }
 
 function hardDrop() {
@@ -298,23 +335,91 @@ function restartGame() {
   gameOver = false;
   fallCounter = 0;
   hardOperationCount = 0;
+  freezeItems = 0;
+  freezeFramesRemaining = 0;
   fillNextQueue();
   currentPiece = takeNextPiece();
+  updateModeButton();
+  updateFreezeButton();
 }
 
-function toggleHardMode() {
-  hardMode = !hardMode;
-  restartGame();
+function endGame() {
+  gameOver = true;
+  updateModeButton();
+  updateFreezeButton();
+}
+
+function updateModeButton() {
   const modeButton = document.querySelector('[data-action="mode"]');
-  if (modeButton) modeButton.textContent = hardMode ? 'MODE: HARD' : 'MODE: NORMAL';
+  if (modeButton) {
+    if (!hardMode) modeButton.textContent = 'START HARD MODE';
+    else if (gameOver) modeButton.textContent = 'EXIT HARD MODE';
+    else modeButton.textContent = 'HARD MODE';
+  }
+  const speedSlider = document.querySelector('#growth-speed');
+  if (speedSlider) speedSlider.disabled = hardMode;
+}
+
+function bindGrowthSpeedControl() {
+  const speedSlider = document.querySelector('#growth-speed');
+  const speedOutput = document.querySelector('#growth-speed-value');
+  if (!speedSlider || !speedOutput) return;
+
+  growthSpeed = Number(speedSlider.value);
+  speedSlider.addEventListener('input', () => {
+    growthSpeed = Number(speedSlider.value);
+    speedOutput.value = String(growthSpeed);
+  });
+}
+
+function handleModeRequest() {
+  if (!hardMode) {
+    hardMode = true;
+    restartGame();
+  } else if (gameOver) {
+    hardMode = false;
+    restartGame();
+  }
+}
+
+function isGrowthFrozen() {
+  return freezeFramesRemaining > 0;
+}
+
+function useFreezeItem() {
+  if (gameOver || freezeItems <= 0 || isGrowthFrozen()) return false;
+  freezeItems -= 1;
+  freezeFramesRemaining = FREEZE_DURATION_FRAMES;
+  currentPiece.warning = null;
+  currentPiece.growthCounter = 0;
+  hardOperationCount -= hardOperationCount % 4;
+  updateFreezeButton();
+  return true;
+}
+
+function updateFreezeButton() {
+  const freezeButton = document.querySelector('[data-action="freeze"]');
+  if (!freezeButton) return;
+  if (isGrowthFrozen()) {
+    freezeButton.textContent = `FROZEN ${(freezeFramesRemaining / 60).toFixed(1)}s`;
+  } else {
+    freezeButton.textContent = `FREEZE ×${freezeItems}`;
+  }
+  freezeButton.disabled = gameOver || freezeItems <= 0 || isGrowthFrozen();
 }
 
 function performOperation(action) {
   if (gameOver) return;
 
-  // On even-numbered hard-mode inputs, grow at the location shown since
-  // the previous input before carrying out the new operation.
-  if (hardMode && (hardOperationCount + 1) % 2 === 0) {
+  if (isGrowthFrozen()) {
+    action();
+    return;
+  }
+
+  // In hard mode, the first input previews a cell and the fourth grows it.
+  // Growth happens before carrying out input four so Hold and hard drop
+  // cannot discard the warned cell.
+  if (hardMode && (hardOperationCount + 1) % 4 === 0) {
     currentPiece.commitWarningGrowth();
   }
 
@@ -322,7 +427,7 @@ function performOperation(action) {
   if (!hardMode || gameOver) return;
 
   hardOperationCount += 1;
-  if (hardOperationCount % 2 === 1) {
+  if (hardOperationCount % 4 === 1) {
     currentPiece.warning = null;
     currentPiece.chooseWarning();
   }
@@ -334,6 +439,10 @@ function drawInterface() {
   if (!canHold) {
     noStroke(); fill(150); textSize(10); text('USED', 20, 165);
   }
+  noStroke();
+  fill(isGrowthFrozen() ? color(80, 190, 255) : 180);
+  textSize(11);
+  text(isGrowthFrozen() ? `Frozen ${(freezeFramesRemaining / 60).toFixed(1)}s` : `Freeze ×${freezeItems}`, 20, 205);
 
   drawPanelTitle('Next:', 405, 55);
   nextQueue.forEach((type, index) => drawMiniPiece(type, 405, 78 + index * 82, 15));
@@ -346,12 +455,18 @@ function drawInterface() {
   text(`Score: ${score}`, 30, 30);
   textSize(14);
   text(`Growth speed: ${Math.floor(piecesLocked / 5) + 1}`, 365, 30);
-  text(hardMode ? `HARD ${hardOperationCount % 2 + 1}/2` : 'NORMAL', 205, 30);
+  text(hardMode ? `HARD ${hardOperationCount % 4 + 1}/4` : 'NORMAL', 205, 30);
 
   if (gameOver) {
-    noStroke(); fill(0, 190); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 100);
-    textAlign(CENTER, CENTER); fill(255); textSize(28); text('GAME OVER', width / 2, BOARD_Y + 275);
-    textSize(14); text('Press R to restart', width / 2, BOARD_Y + 310);
+    noStroke(); fill(0, 210); rect(BOARD_X, BOARD_Y + 220, COLS * CELL, 140);
+    textAlign(CENTER, CENTER); fill(255); textSize(28); text('GAME OVER', width / 2, BOARD_Y + 255);
+    textSize(14);
+    if (hardMode) {
+      text('R: Play hard mode again', width / 2, BOARD_Y + 300);
+      text('H: Exit hard mode', width / 2, BOARD_Y + 330);
+    } else {
+      text('Press R to restart', width / 2, BOARD_Y + 310);
+    }
     textAlign(LEFT, BASELINE);
   }
 }
@@ -384,8 +499,9 @@ function handleHeldKeys() {
 function keyPressed(event) {
   if (event && event.repeat) return false;
 
-  if (key === 'h' || key === 'H') toggleHardMode();
+  if (key === 'h' || key === 'H') handleModeRequest();
   else if (key === 'r' || key === 'R') restartGame();
+  else if (key === 'f' || key === 'F') useFreezeItem();
   else if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === DOWN_ARROW) performOperation(() => {});
   else if (keyCode === UP_ARROW) performOperation(() => currentPiece.rotate());
   else if (key === 'z' || key === 'Z') performOperation(() => currentPiece.rotate(-1));
@@ -405,7 +521,8 @@ function bindTouchControls() {
     button.addEventListener('pointerdown', (event) => {
       event.preventDefault();
       const action = button.dataset.action;
-      if (action === 'mode') toggleHardMode();
+      if (action === 'mode') handleModeRequest();
+      else if (action === 'freeze') useFreezeItem();
       else if (action === 'left') performOperation(() => currentPiece.move(-1, 0));
       else if (action === 'right') performOperation(() => currentPiece.move(1, 0));
       else if (action === 'down') performOperation(() => currentPiece.move(0, 1));

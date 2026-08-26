@@ -13,6 +13,13 @@
   <body>
     <main class="game-shell" aria-label="生长俄罗斯方块游戏">
       <div id="game-canvas"></div>
+      <label class="growth-control" for="growth-speed">
+        <span>生长速度</span>
+        <small>慢</small>
+        <input id="growth-speed" type="range" min="1" max="10" value="3" step="1" />
+        <small>快</small>
+        <output id="growth-speed-value" for="growth-speed">3</output>
+      </label>
       <div class="touch-controls" aria-label="触控操作">
         <button data-action="rotate-ccw" aria-label="逆时针旋转">↺</button>
         <button data-action="rotate" aria-label="顺时针旋转">↻</button>
@@ -22,7 +29,8 @@
         <button data-action="down" aria-label="向下移动">↓</button>
         <button data-action="drop" aria-label="直接落下">DROP</button>
         <button data-action="hold" aria-label="存储或交换方块">HOLD</button>
-        <button data-action="mode" aria-label="切换普通或困难模式">MODE: NORMAL</button>
+        <button data-action="freeze" aria-label="使用停止生长道具">FREEZE ×0</button>
+        <button data-action="mode" aria-label="进入或退出困难模式">START HARD MODE</button>
       </div>
       <div class="desktop-controls" aria-label="电脑键盘操作说明">
         <span><kbd>←</kbd><kbd>→</kbd> 移动</span>
@@ -32,6 +40,7 @@
         <span><kbd>X</kbd> 旋转180°</span>
         <span><kbd>SPACE</kbd> 直接落下</span>
         <span><kbd>C</kbd> 存储/交换</span>
+        <span><kbd>F</kbd> 冻结生长</span>
         <span><kbd>H</kbd> 困难模式</span>
         <span><kbd>R</kbd> 重开</span>
       </div>
