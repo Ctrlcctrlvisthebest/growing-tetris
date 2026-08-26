@@ -28,6 +28,84 @@ body {
   touch-action: none;
 }
 
+.canvas-stage { position: relative; }
+
+.growth-control {
+  position: absolute;
+  z-index: 2;
+  top: 31%;
+  left: 2%;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "title value"
+    "slider slider"
+    "slow fast";
+  align-items: center;
+  gap: 2px;
+  width: 15%;
+  max-width: 74px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 7px;
+}
+
+.growth-control span { grid-area: title; }
+.growth-control small { color: #888; font-size: 6px; }
+.growth-control small:first-of-type { grid-area: slow; }
+.growth-control small:last-of-type { grid-area: fast; text-align: right; }
+.growth-control output { grid-area: value; color: #fff; font: bold 7px/1 monospace; text-align: right; }
+
+.growth-control input {
+  grid-area: slider;
+  width: 100%;
+  height: 9px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.growth-control input::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 1px;
+  background: #777;
+}
+
+.growth-control input::-webkit-slider-thumb {
+  width: 9px;
+  height: 9px;
+  margin-top: -3.5px;
+  border: 0;
+  border-radius: 50%;
+  -webkit-appearance: none;
+  background: #fff;
+}
+
+.growth-control input::-moz-range-track {
+  height: 2px;
+  border: 0;
+  border-radius: 1px;
+  background: #777;
+}
+
+.growth-control input::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.growth-control input:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
 .touch-controls {
   display: none;
   grid-template-columns: repeat(3, 1fr);
@@ -35,7 +113,8 @@ body {
     "rotate-ccw rotate rotate-180"
     "left down right"
     "hold drop drop"
-    "mode mode mode";
+    "freeze freeze freeze"
+    "restart mode mode";
   gap: 6px;
   padding: 8px;
   background: #000;
@@ -58,9 +137,12 @@ body {
 .touch-controls [data-action="right"] { grid-area: right; }
 .touch-controls [data-action="hold"] { grid-area: hold; font-size: 12px; }
 .touch-controls [data-action="drop"] { grid-area: drop; font-size: 12px; }
+.touch-controls [data-action="freeze"] { grid-area: freeze; font-size: 12px; }
+.touch-controls [data-action="restart"] { grid-area: restart; font-size: 11px; }
 .touch-controls [data-action="mode"] { grid-area: mode; font-size: 12px; }
 
 .touch-controls button:active { background: #444; }
+.touch-controls button:disabled { color: #777; border-color: #444; background: #111; }
 
 .desktop-controls {
   display: flex;
