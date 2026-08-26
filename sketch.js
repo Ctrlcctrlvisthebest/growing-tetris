@@ -30,6 +30,8 @@ let piecesLocked = 0;
 let gameOver = false;
 let fallCounter = 0;
 let framesPerFall = 30;
+let hardMode = false;
+let hardOperationCount = 0;
 
 function setup() {
   const canvas = createCanvas(500, 700);
@@ -47,7 +49,7 @@ function draw() {
 
   if (!gameOver) {
     handleHeldKeys();
-    currentPiece.updateGrowth();
+    if (!hardMode) currentPiece.updateGrowth();
     fallCounter += 1;
     if (fallCounter >= framesPerFall) {
       fallCounter = 0;
@@ -157,10 +159,17 @@ class Piece {
     this.growthCounter += 1;
     if (!this.warning && this.growthCounter >= interval - this.warningFrames) this.chooseWarning();
     if (this.growthCounter >= interval) {
-      if (this.warning && this.isGrowthCellValid(...this.warning)) this.shape.push([...this.warning]);
-      this.warning = null;
-      this.growthCounter = 0;
+      this.commitWarningGrowth();
     }
+  }
+
+  commitWarningGrowth() {
+    if (!this.warning) this.chooseWarning();
+    if (this.warning && this.isGrowthCellValid(...this.warning)) {
+      this.shape.push([...this.warning]);
+    }
+    this.warning = null;
+    this.growthCounter = 0;
   }
 
   containsCell(x, y) {
@@ -239,6 +248,7 @@ function lockAndSpawn() {
   canHold = true;
   fallCounter = 0;
   if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) gameOver = true;
+  if (hardMode && hardOperationCount % 2 === 1 && !gameOver) currentPiece.chooseWarning();
 }
 
 function holdCurrentPiece() {
@@ -287,8 +297,35 @@ function restartGame() {
   piecesLocked = 0;
   gameOver = false;
   fallCounter = 0;
+  hardOperationCount = 0;
   fillNextQueue();
   currentPiece = takeNextPiece();
+}
+
+function toggleHardMode() {
+  hardMode = !hardMode;
+  restartGame();
+  const modeButton = document.querySelector('[data-action="mode"]');
+  if (modeButton) modeButton.textContent = hardMode ? 'MODE: HARD' : 'MODE: NORMAL';
+}
+
+function performOperation(action) {
+  if (gameOver) return;
+
+  // On even-numbered hard-mode inputs, grow at the location shown since
+  // the previous input before carrying out the new operation.
+  if (hardMode && (hardOperationCount + 1) % 2 === 0) {
+    currentPiece.commitWarningGrowth();
+  }
+
+  action();
+  if (!hardMode || gameOver) return;
+
+  hardOperationCount += 1;
+  if (hardOperationCount % 2 === 1) {
+    currentPiece.warning = null;
+    currentPiece.chooseWarning();
+  }
 }
 
 function drawInterface() {
@@ -309,6 +346,7 @@ function drawInterface() {
   text(`Score: ${score}`, 30, 30);
   textSize(14);
   text(`Growth speed: ${Math.floor(piecesLocked / 5) + 1}`, 365, 30);
+  text(hardMode ? `HARD ${hardOperationCount % 2 + 1}/2` : 'NORMAL', 205, 30);
 
   if (gameOver) {
     noStroke(); fill(0, 190); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 100);
@@ -343,13 +381,18 @@ function handleHeldKeys() {
   if (keyIsDown(RIGHT_ARROW) && frameCount % 7 === 0) currentPiece.move(1, 0);
 }
 
-function keyPressed() {
-  if (keyCode === UP_ARROW && !gameOver) currentPiece.rotate();
-  if ((key === 'z' || key === 'Z') && !gameOver) currentPiece.rotate(-1);
-  if ((key === 'x' || key === 'X') && !gameOver) currentPiece.rotate(2);
-  if (key === ' ' && !gameOver) hardDrop();
-  if ((key === 'c' || key === 'C') && !gameOver) holdCurrentPiece();
-  if (key === 'r' || key === 'R') restartGame();
+function keyPressed(event) {
+  if (event && event.repeat) return false;
+
+  if (key === 'h' || key === 'H') toggleHardMode();
+  else if (key === 'r' || key === 'R') restartGame();
+  else if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === DOWN_ARROW) performOperation(() => {});
+  else if (keyCode === UP_ARROW) performOperation(() => currentPiece.rotate());
+  else if (key === 'z' || key === 'Z') performOperation(() => currentPiece.rotate(-1));
+  else if (key === 'x' || key === 'X') performOperation(() => currentPiece.rotate(2));
+  else if (key === ' ') performOperation(() => hardDrop());
+  else if (key === 'c' || key === 'C') performOperation(() => holdCurrentPiece());
+
   if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW, UP_ARROW, 32].includes(keyCode)) return false;
 }
 
@@ -362,14 +405,15 @@ function bindTouchControls() {
     button.addEventListener('pointerdown', (event) => {
       event.preventDefault();
       const action = button.dataset.action;
-      if (action === 'left' && !gameOver) currentPiece.move(-1, 0);
-      if (action === 'right' && !gameOver) currentPiece.move(1, 0);
-      if (action === 'down' && !gameOver) currentPiece.move(0, 1);
-      if (action === 'rotate' && !gameOver) currentPiece.rotate();
-      if (action === 'rotate-ccw' && !gameOver) currentPiece.rotate(-1);
-      if (action === 'rotate-180' && !gameOver) currentPiece.rotate(2);
-      if (action === 'drop') hardDrop();
-      if (action === 'hold') holdCurrentPiece();
+      if (action === 'mode') toggleHardMode();
+      else if (action === 'left') performOperation(() => currentPiece.move(-1, 0));
+      else if (action === 'right') performOperation(() => currentPiece.move(1, 0));
+      else if (action === 'down') performOperation(() => currentPiece.move(0, 1));
+      else if (action === 'rotate') performOperation(() => currentPiece.rotate());
+      else if (action === 'rotate-ccw') performOperation(() => currentPiece.rotate(-1));
+      else if (action === 'rotate-180') performOperation(() => currentPiece.rotate(2));
+      else if (action === 'drop') performOperation(() => hardDrop());
+      else if (action === 'hold') performOperation(() => holdCurrentPiece());
     });
   });
 }

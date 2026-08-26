@@ -34,7 +34,8 @@ body {
   grid-template-areas:
     "rotate-ccw rotate rotate-180"
     "left down right"
-    "hold drop drop";
+    "hold drop drop"
+    "mode mode mode";
   gap: 6px;
   padding: 8px;
   background: #000;
@@ -57,6 +58,7 @@ body {
 .touch-controls [data-action="right"] { grid-area: right; }
 .touch-controls [data-action="hold"] { grid-area: hold; font-size: 12px; }
 .touch-controls [data-action="drop"] { grid-area: drop; font-size: 12px; }
+.touch-controls [data-action="mode"] { grid-area: mode; font-size: 12px; }
 
 .touch-controls button:active { background: #444; }
 
