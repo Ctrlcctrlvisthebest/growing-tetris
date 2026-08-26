@@ -132,15 +132,24 @@ class Piece {
     return true;
   }
 
-  rotate() {
-    const rotated = this.shape.map(([x, y]) => [-y, x]);
+  rotate(turns = 1) {
+    const clockwiseTurns = turns === -1 ? 3 : turns;
+    let rotated = this.shape.map(([x, y]) => [x, y]);
+    for (let turn = 0; turn < clockwiseTurns; turn += 1) {
+      rotated = rotated.map(([x, y]) => [-y, x]);
+    }
     const kicks = [0, 1, -1, 2, -2];
     const kick = kicks.find((offset) => board.isValid(this, this.x + offset, this.y, rotated));
-    if (kick === undefined) return;
+    if (kick === undefined) return false;
     this.shape = rotated;
     this.x += kick;
-    if (this.warning) this.warning = [-this.warning[1], this.warning[0]];
+    if (this.warning) {
+      for (let turn = 0; turn < clockwiseTurns; turn += 1) {
+        this.warning = [-this.warning[1], this.warning[0]];
+      }
+    }
     this.revalidateWarning();
+    return true;
   }
 
   updateGrowth() {
@@ -336,6 +345,8 @@ function handleHeldKeys() {
 
 function keyPressed() {
   if (keyCode === UP_ARROW && !gameOver) currentPiece.rotate();
+  if ((key === 'z' || key === 'Z') && !gameOver) currentPiece.rotate(-1);
+  if ((key === 'x' || key === 'X') && !gameOver) currentPiece.rotate(2);
   if (key === ' ' && !gameOver) hardDrop();
   if ((key === 'c' || key === 'C') && !gameOver) holdCurrentPiece();
   if (key === 'r' || key === 'R') restartGame();
@@ -355,6 +366,8 @@ function bindTouchControls() {
       if (action === 'right' && !gameOver) currentPiece.move(1, 0);
       if (action === 'down' && !gameOver) currentPiece.move(0, 1);
       if (action === 'rotate' && !gameOver) currentPiece.rotate();
+      if (action === 'rotate-ccw' && !gameOver) currentPiece.rotate(-1);
+      if (action === 'rotate-180' && !gameOver) currentPiece.rotate(2);
       if (action === 'drop') hardDrop();
       if (action === 'hold') holdCurrentPiece();
     });

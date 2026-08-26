@@ -30,7 +30,11 @@ body {
 
 .touch-controls {
   display: none;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-areas:
+    "rotate-ccw rotate rotate-180"
+    "left down right"
+    "hold drop drop";
   gap: 6px;
   padding: 8px;
   background: #000;
@@ -45,13 +49,47 @@ body {
   font: bold 16px/1 monospace;
 }
 
-.touch-controls button:nth-last-child(-n + 2) {
-  grid-column: span 2;
-  font-size: 12px;
-}
+.touch-controls [data-action="rotate"] { grid-area: rotate; }
+.touch-controls [data-action="rotate-ccw"] { grid-area: rotate-ccw; }
+.touch-controls [data-action="rotate-180"] { grid-area: rotate-180; font-size: 13px; }
+.touch-controls [data-action="left"] { grid-area: left; }
+.touch-controls [data-action="down"] { grid-area: down; }
+.touch-controls [data-action="right"] { grid-area: right; }
+.touch-controls [data-action="hold"] { grid-area: hold; font-size: 12px; }
+.touch-controls [data-action="drop"] { grid-area: drop; font-size: 12px; }
 
 .touch-controls button:active { background: #444; }
 
+.desktop-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 14px;
+  padding: 12px 10px 20px;
+  border-top: 1px solid #333;
+  color: #bbb;
+  font-size: 11px;
+}
+
+.desktop-controls span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.desktop-controls kbd {
+  min-width: 24px;
+  padding: 4px 6px;
+  border: 1px solid #777;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #181818;
+  color: #fff;
+  font: bold 10px/1 monospace;
+  text-align: center;
+}
+
 @media (pointer: coarse), (max-width: 560px) {
   .touch-controls { display: grid; }
+  .desktop-controls { display: none; }
 }

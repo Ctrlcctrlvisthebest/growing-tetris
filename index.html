@@ -14,12 +14,24 @@
     <main class="game-shell" aria-label="生长俄罗斯方块游戏">
       <div id="game-canvas"></div>
       <div class="touch-controls" aria-label="触控操作">
+        <button data-action="rotate-ccw" aria-label="逆时针旋转">↺</button>
+        <button data-action="rotate" aria-label="顺时针旋转">↻</button>
+        <button data-action="rotate-180" aria-label="旋转180度">180°</button>
         <button data-action="left" aria-label="向左移动">←</button>
-        <button data-action="rotate" aria-label="旋转">↻</button>
         <button data-action="right" aria-label="向右移动">→</button>
         <button data-action="down" aria-label="向下移动">↓</button>
         <button data-action="drop" aria-label="直接落下">DROP</button>
         <button data-action="hold" aria-label="存储或交换方块">HOLD</button>
+      </div>
+      <div class="desktop-controls" aria-label="电脑键盘操作说明">
+        <span><kbd>←</kbd><kbd>→</kbd> 移动</span>
+        <span><kbd>↓</kbd> 加速</span>
+        <span><kbd>↑</kbd> 顺时针</span>
+        <span><kbd>Z</kbd> 逆时针</span>
+        <span><kbd>X</kbd> 旋转180°</span>
+        <span><kbd>SPACE</kbd> 直接落下</span>
+        <span><kbd>C</kbd> 存储/交换</span>
+        <span><kbd>R</kbd> 重开</span>
       </div>
     </main>
   </body>
