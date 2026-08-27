@@ -7,6 +7,10 @@ const PREVIEW_COUNT = 5;
 const FRAMES_PER_FALL = 30;
 const FREEZE_DURATION_FRAMES = 8 * 60;
 const GROWTH_WARNING_FRAMES = 45;
+const PIECES_PER_SPEED_LEVEL = 5;
+const GROWTH_SPEED_STEP_FRAMES = 12;
+const MIN_GROWTH_INTERVAL = 60;
+const SPEED_UP_NOTICE_FRAMES = 90;
 
 const SHAPES = {
   I: [[0, 0], [1, 0], [2, 0], [3, 0]],
@@ -31,6 +35,7 @@ let heldPiece = null;
 let canHold = true;
 let score = 0;
 let piecesLocked = 0;
+let speedUpNoticeFrames = 0;
 let gameOver = false;
 let gameStarted = false;
 let fallCounter = 0;
@@ -77,6 +82,7 @@ function draw() {
       fallCounter = 0;
       if (!currentPiece.move(0, 1)) lockAndSpawn();
     }
+    if (speedUpNoticeFrames > 0) speedUpNoticeFrames -= 1;
   }
 
   drawInterface();
@@ -181,7 +187,7 @@ class Piece {
   }
 
   updateGrowth() {
-    const interval = Math.max(35, 330 - growthSpeed * 24 - piecesLocked * 7);
+    const interval = getGrowthInterval();
     this.growthCounter += 1;
     if (!this.warning && this.growthCounter >= interval - GROWTH_WARNING_FRAMES) this.chooseWarning();
     if (this.growthCounter >= interval) {
@@ -274,6 +280,9 @@ function lockAndSpawn() {
   freezeItems += lines;
   if (lines > 0) updateFreezeButton();
   piecesLocked += 1;
+  if (!hardMode && piecesLocked % PIECES_PER_SPEED_LEVEL === 0) {
+    speedUpNoticeFrames = SPEED_UP_NOTICE_FRAMES;
+  }
   currentPiece = takeNextPiece();
   canHold = true;
   fallCounter = 0;
@@ -340,6 +349,15 @@ function hardDrop() {
   lockAndSpawn();
 }
 
+function getGrowthLevel() {
+  return Math.floor(piecesLocked / PIECES_PER_SPEED_LEVEL) + 1;
+}
+
+function getGrowthInterval() {
+  const progressReduction = (getGrowthLevel() - 1) * GROWTH_SPEED_STEP_FRAMES;
+  return Math.max(MIN_GROWTH_INTERVAL, 330 - growthSpeed * 24 - progressReduction);
+}
+
 function restartGame() {
   board = new Board();
   nextQueue = [];
@@ -347,6 +365,7 @@ function restartGame() {
   canHold = true;
   score = 0;
   piecesLocked = 0;
+  speedUpNoticeFrames = 0;
   gameOver = false;
   fallCounter = 0;
   hardOperationCount = 0;
@@ -506,8 +525,19 @@ function drawInterface() {
   textSize(20);
   text(`Score: ${score}`, 30, 30);
   textSize(14);
-  text(`Growth speed: ${Math.floor(piecesLocked / 5) + 1}`, 365, 30);
+  text(`Growth Lv: ${getGrowthLevel()}`, 385, 30);
   text(hardMode ? `HARD ${hardOperationCount % 4 + 1}/4` : 'NORMAL', 205, 30);
+
+  if (speedUpNoticeFrames > 0) {
+    const pulse = 140 + 115 * Math.abs(Math.sin(frameCount * 0.2));
+    fill(255, 190, 60, pulse);
+    textAlign(RIGHT, CENTER);
+    textStyle(BOLD);
+    textSize(13);
+    text('SPEED\nUP!', width - 7, BOARD_Y + 505);
+    textStyle(NORMAL);
+    textAlign(LEFT, BASELINE);
+  }
 
   if (gameOver) {
     noStroke(); fill(0, 210); rect(BOARD_X, BOARD_Y + 220, COLS * CELL, 140);
