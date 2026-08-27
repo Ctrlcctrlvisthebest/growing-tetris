@@ -12,6 +12,38 @@
   </head>
   <body>
     <main class="game-shell" aria-label="Growing Tetris game">
+      <section id="start-screen" class="start-screen" aria-labelledby="start-title" aria-describedby="start-description">
+        <div class="start-card">
+          <p class="start-kicker">A TETRIS GAME THAT NEVER STOPS CHANGING</p>
+          <h1 id="start-title">GROWING<br />TETRIS</h1>
+          <p class="start-prompt desktop-start">PRESS SPACE TO START</p>
+          <p class="start-prompt touch-start">TAP ANYWHERE TO START</p>
+          <p id="start-description" class="start-description">
+            Falling pieces grow while you play. A flashing cell shows where the next block will appear—move and rotate before it grows.
+          </p>
+
+          <div class="start-tips" aria-label="How to play">
+            <p><strong>LINES &amp; FREEZE</strong> Clear each line to earn 1 Freeze. Use it to stop all growth for 8 seconds.</p>
+            <p><strong>GROWTH SPEED</strong> Adjust the slider during Normal mode. The game also speeds up as you progress.</p>
+            <p><strong>DIRECTED GROWTH</strong> Check the box to keep growth on the right. Rotate while it flashes to move the target.</p>
+          </div>
+
+          <div class="start-controls" aria-label="Keyboard controls">
+            <span><kbd>←</kbd><kbd>→</kbd> Move</span>
+            <span><kbd>↓</kbd> Soft drop</span>
+            <span><kbd>↑</kbd> Rotate</span>
+            <span><kbd>Z</kbd> CCW</span>
+            <span><kbd>X</kbd> 180°</span>
+            <span><kbd>SPACE</kbd> Drop</span>
+            <span><kbd>C</kbd> Hold</span>
+            <span><kbd>F</kbd> Freeze</span>
+            <span><kbd>H</kbd> Hard mode</span>
+            <span><kbd>R</kbd> Restart</span>
+          </div>
+
+        </div>
+      </section>
+
       <div class="canvas-stage">
         <div id="game-canvas"></div>
         <label class="growth-control" for="growth-speed">
@@ -51,6 +83,10 @@
         <span><kbd>H</kbd> Hard mode</span>
         <span><kbd>R</kbd> Restart</span>
       </div>
+      <section class="game-guide" aria-label="Growth and freeze guide">
+        <p><strong>GROWTH SPEED</strong> Drag the slider left or right. It works in Normal mode only.</p>
+        <p><strong>FREEZE</strong> Clear each line to earn 1 item. Press <kbd>F</kbd> or tap FREEZE to stop growth for 8 seconds.</p>
+      </section>
     </main>
   </body>
 </html>

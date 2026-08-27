@@ -32,6 +32,7 @@ let canHold = true;
 let score = 0;
 let piecesLocked = 0;
 let gameOver = false;
+let gameStarted = false;
 let fallCounter = 0;
 let hardMode = false;
 let hardOperationCount = 0;
@@ -44,6 +45,7 @@ let speedSlider;
 let speedOutput;
 let directedGrowthCheckbox;
 let freezeButton;
+let startScreen;
 
 function setup() {
   const canvas = createCanvas(500, 700);
@@ -54,6 +56,7 @@ function setup() {
   bindGrowthControls();
   restartGame();
   bindTouchControls();
+  bindStartScreen();
 }
 
 function draw() {
@@ -61,7 +64,7 @@ function draw() {
   board.draw();
   currentPiece.draw();
 
-  if (!gameOver) {
+  if (gameStarted && !gameOver) {
     handleHeldKeys();
     if (freezeFramesRemaining > 0) {
       freezeFramesRemaining -= 1;
@@ -367,6 +370,27 @@ function cacheControls() {
   speedOutput = document.querySelector('#growth-speed-value');
   directedGrowthCheckbox = document.querySelector('#directed-growth');
   freezeButton = document.querySelector('[data-action="freeze"]');
+  startScreen = document.querySelector('#start-screen');
+}
+
+function startGame() {
+  if (gameStarted) return;
+  gameStarted = true;
+  fallCounter = 0;
+  currentPiece.growthCounter = 0;
+  if (startScreen) {
+    startScreen.classList.add('is-hidden');
+    startScreen.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function bindStartScreen() {
+  if (!startScreen) return;
+  startScreen.addEventListener('pointerdown', (event) => {
+    if (!usesTouchControls()) return;
+    event.preventDefault();
+    startGame();
+  });
 }
 
 function updateModeButton() {
@@ -531,6 +555,11 @@ function handleHeldKeys() {
 
 function keyPressed(event) {
   if (event && event.repeat) return false;
+
+  if (!gameStarted) {
+    if (key === ' ') startGame();
+    return false;
+  }
 
   if (key === 'h' || key === 'H') handleModeRequest();
   else if (key === 'r' || key === 'R') restartGame();
