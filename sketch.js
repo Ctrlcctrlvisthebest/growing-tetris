@@ -4,13 +4,18 @@ const CELL = 30;
 const BOARD_X = 100;
 const BOARD_Y = 50;
 const PREVIEW_COUNT = 5;
-const FRAMES_PER_FALL = 30;
+const FALL_INTERVAL_MS = 500;
+const HORIZONTAL_HOLD_DELAY_MS = 140;
+const HORIZONTAL_REPEAT_MS = 70;
+const SOFT_DROP_HOLD_DELAY_MS = 60;
+const SOFT_DROP_REPEAT_MS = 45;
 const FREEZE_DURATION_FRAMES = 8 * 60;
 const GROWTH_WARNING_FRAMES = 45;
 const PIECES_PER_SPEED_LEVEL = 5;
 const GROWTH_SPEED_STEP_FRAMES = 12;
 const MIN_GROWTH_INTERVAL = 60;
 const SPEED_UP_NOTICE_FRAMES = 90;
+const MAX_ROTATION_KICK_DISTANCE = 4;
 
 const SHAPES = {
   I: [[0, 0], [1, 0], [2, 0], [3, 0]],
@@ -27,6 +32,7 @@ const COLORS = {
   L: '#ff9d45', J: '#ff659d', T: '#a879ff',
 };
 const PIECE_TYPES = Object.keys(SHAPES);
+const ROTATION_KICKS = createRotationKicks(MAX_ROTATION_KICK_DISTANCE);
 
 let board;
 let currentPiece;
@@ -38,7 +44,14 @@ let piecesLocked = 0;
 let speedUpNoticeFrames = 0;
 let gameOver = false;
 let gameStarted = false;
-let fallCounter = 0;
+let gamePaused = false;
+let fallElapsedMs = 0;
+let heldHorizontalDirection = 0;
+let horizontalHoldElapsedMs = 0;
+let horizontalRepeatElapsedMs = 0;
+let softDropWasHeld = false;
+let softDropHoldElapsedMs = 0;
+let softDropRepeatElapsedMs = 0;
 let hardMode = false;
 let hardOperationCount = 0;
 let growthSpeed = 3;
@@ -50,6 +63,7 @@ let speedSlider;
 let speedOutput;
 let directedGrowthCheckbox;
 let freezeButton;
+let pauseButton;
 let startScreen;
 
 function setup() {
@@ -69,19 +83,16 @@ function draw() {
   board.draw();
   currentPiece.draw();
 
-  if (gameStarted && !gameOver) {
-    handleHeldKeys();
+  if (gameStarted && !gameOver && !gamePaused) {
+    const elapsedMs = Math.min(deltaTime, 100);
+    handleHeldKeys(elapsedMs);
     if (freezeFramesRemaining > 0) {
       freezeFramesRemaining -= 1;
       if (freezeFramesRemaining % 15 === 0) updateFreezeButton();
     } else if (!hardMode) {
       currentPiece.updateGrowth();
     }
-    fallCounter += 1;
-    if (fallCounter >= FRAMES_PER_FALL) {
-      fallCounter = 0;
-      if (!currentPiece.move(0, 1)) lockAndSpawn();
-    }
+    updateFalling(elapsedMs);
     if (speedUpNoticeFrames > 0) speedUpNoticeFrames -= 1;
   }
 
@@ -109,7 +120,8 @@ class Board {
     return shape.every(([dx, dy]) => {
       const col = newX + dx;
       const row = newY + dy;
-      return col >= 0 && col < COLS && row >= 0 && row < ROWS && !this.grid[row][col];
+      return col >= 0 && col < COLS && row < ROWS
+        && (row < 0 || !this.grid[row][col]);
     });
   }
 
@@ -167,11 +179,13 @@ class Piece {
     for (let turn = 0; turn < clockwiseTurns; turn += 1) {
       rotated = rotated.map(([x, y]) => [-y, x]);
     }
-    const kicks = [0, 1, -1, 2, -2];
-    const kick = kicks.find((offset) => board.isValid(this, this.x + offset, this.y, rotated));
-    if (kick === undefined) return false;
+    const kick = ROTATION_KICKS.find(([dx, dy]) => (
+      board.isValid(this, this.x + dx, this.y + dy, rotated)
+    ));
+    if (!kick) return false;
     this.shape = rotated;
-    this.x += kick;
+    this.x += kick[0];
+    this.y += kick[1];
     if (this.warning) {
       if (directedGrowth) {
         this.warning = null;
@@ -255,6 +269,23 @@ class Piece {
   }
 }
 
+function createRotationKicks(maxDistance) {
+  const kicks = [];
+  for (let dx = -maxDistance; dx <= maxDistance; dx += 1) {
+    for (let dy = -maxDistance; dy <= maxDistance; dy += 1) {
+      if (Math.abs(dx) + Math.abs(dy) <= maxDistance) kicks.push([dx, dy]);
+    }
+  }
+  return kicks.sort((a, b) => {
+    const distanceDifference = Math.abs(a[0]) + Math.abs(a[1])
+      - Math.abs(b[0]) - Math.abs(b[1]);
+    if (distanceDifference !== 0) return distanceDifference;
+    if (Math.abs(a[1]) !== Math.abs(b[1])) return Math.abs(a[1]) - Math.abs(b[1]);
+    if (a[1] !== b[1]) return a[1] - b[1];
+    return Math.abs(a[0]) - Math.abs(b[0]);
+  });
+}
+
 function drawCell(col, row, cellColor) {
   fill(cellColor);
   stroke(50);
@@ -285,7 +316,7 @@ function lockAndSpawn() {
   }
   currentPiece = takeNextPiece();
   canHold = true;
-  fallCounter = 0;
+  fallElapsedMs = 0;
   if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) endGame();
   if (hardMode && hardOperationCount % 4 !== 0 && !gameOver && !isGrowthFrozen()) currentPiece.chooseWarning();
 }
@@ -314,7 +345,7 @@ function holdCurrentPiece() {
   heldPiece = outgoingPiece;
   currentPiece = incomingPiece;
   canHold = false;
-  fallCounter = 0;
+  fallElapsedMs = 0;
   return true;
 }
 
@@ -367,7 +398,9 @@ function restartGame() {
   piecesLocked = 0;
   speedUpNoticeFrames = 0;
   gameOver = false;
-  fallCounter = 0;
+  gamePaused = false;
+  fallElapsedMs = 0;
+  resetInputTimers();
   hardOperationCount = 0;
   freezeItems = 0;
   freezeFramesRemaining = 0;
@@ -375,12 +408,14 @@ function restartGame() {
   currentPiece = takeNextPiece();
   updateModeButton();
   updateFreezeButton();
+  updatePauseButton();
 }
 
 function endGame() {
   gameOver = true;
   updateModeButton();
   updateFreezeButton();
+  updatePauseButton();
 }
 
 function cacheControls() {
@@ -389,13 +424,15 @@ function cacheControls() {
   speedOutput = document.querySelector('#growth-speed-value');
   directedGrowthCheckbox = document.querySelector('#directed-growth');
   freezeButton = document.querySelector('[data-action="freeze"]');
+  pauseButton = document.querySelector('[data-action="pause"]');
   startScreen = document.querySelector('#start-screen');
 }
 
 function startGame() {
   if (gameStarted) return;
   gameStarted = true;
-  fallCounter = 0;
+  fallElapsedMs = 0;
+  resetInputTimers();
   currentPiece.growthCounter = 0;
   if (startScreen) {
     startScreen.classList.add('is-hidden');
@@ -417,8 +454,10 @@ function updateModeButton() {
     if (!hardMode) modeButton.textContent = 'START HARD MODE';
     else if (gameOver) modeButton.textContent = 'EXIT HARD MODE';
     else modeButton.textContent = 'HARD MODE';
+    modeButton.disabled = gamePaused && !gameOver;
   }
-  if (speedSlider) speedSlider.disabled = hardMode;
+  if (speedSlider) speedSlider.disabled = hardMode || gamePaused;
+  if (directedGrowthCheckbox) directedGrowthCheckbox.disabled = gamePaused;
 }
 
 function bindGrowthControls() {
@@ -452,12 +491,28 @@ function handleModeRequest() {
   }
 }
 
+function togglePause() {
+  if (!gameStarted || gameOver) return false;
+  gamePaused = !gamePaused;
+  resetInputTimers();
+  updateModeButton();
+  updateFreezeButton();
+  updatePauseButton();
+  return true;
+}
+
+function updatePauseButton() {
+  if (!pauseButton) return;
+  pauseButton.textContent = gamePaused ? 'RESUME' : 'PAUSE';
+  pauseButton.disabled = gameOver;
+}
+
 function isGrowthFrozen() {
   return freezeFramesRemaining > 0;
 }
 
 function useFreezeItem() {
-  if (gameOver || freezeItems <= 0 || isGrowthFrozen()) return false;
+  if (gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen()) return false;
   freezeItems -= 1;
   freezeFramesRemaining = FREEZE_DURATION_FRAMES;
   currentPiece.warning = null;
@@ -474,11 +529,11 @@ function updateFreezeButton() {
   } else {
     freezeButton.textContent = `FREEZE ×${freezeItems}`;
   }
-  freezeButton.disabled = gameOver || freezeItems <= 0 || isGrowthFrozen();
+  freezeButton.disabled = gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen();
 }
 
 function performOperation(action) {
-  if (gameOver) return;
+  if (gameOver || gamePaused) return;
 
   if (isGrowthFrozen()) {
     action();
@@ -555,6 +610,12 @@ function drawInterface() {
       text(usesTouchControls() ? 'Tap RESTART below' : 'Press R to restart', width / 2, BOARD_Y + 310);
     }
     textAlign(LEFT, BASELINE);
+  } else if (gamePaused) {
+    noStroke(); fill(0, 215); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 110);
+    textAlign(CENTER, CENTER); fill(255); textSize(28); text('PAUSED', width / 2, BOARD_Y + 270);
+    textSize(13);
+    text(usesTouchControls() ? 'Tap RESUME below' : 'Press P to resume', width / 2, BOARD_Y + 315);
+    textAlign(LEFT, BASELINE);
   }
 }
 
@@ -577,10 +638,69 @@ function drawMiniShape(shape, shapeColor, x, y, size) {
   });
 }
 
-function handleHeldKeys() {
-  if (keyIsDown(DOWN_ARROW) && frameCount % 3 === 0) currentPiece.move(0, 1);
-  if (keyIsDown(LEFT_ARROW) && frameCount % 7 === 0) currentPiece.move(-1, 0);
-  if (keyIsDown(RIGHT_ARROW) && frameCount % 7 === 0) currentPiece.move(1, 0);
+function resetInputTimers() {
+  heldHorizontalDirection = 0;
+  horizontalHoldElapsedMs = 0;
+  horizontalRepeatElapsedMs = 0;
+  softDropWasHeld = false;
+  softDropHoldElapsedMs = 0;
+  softDropRepeatElapsedMs = 0;
+}
+
+function updateFalling(elapsedMs) {
+  fallElapsedMs += elapsedMs;
+  if (fallElapsedMs < FALL_INTERVAL_MS) return;
+  fallElapsedMs -= FALL_INTERVAL_MS;
+  if (!currentPiece.move(0, 1)) lockAndSpawn();
+}
+
+function handleHeldKeys(elapsedMs) {
+  const horizontalDirection = keyIsDown(LEFT_ARROW) === keyIsDown(RIGHT_ARROW)
+    ? 0
+    : (keyIsDown(LEFT_ARROW) ? -1 : 1);
+
+  if (horizontalDirection !== heldHorizontalDirection) {
+    heldHorizontalDirection = horizontalDirection;
+    horizontalHoldElapsedMs = 0;
+    horizontalRepeatElapsedMs = 0;
+  } else if (horizontalDirection !== 0) {
+    const previousHoldMs = horizontalHoldElapsedMs;
+    horizontalHoldElapsedMs += elapsedMs;
+    if (horizontalHoldElapsedMs >= HORIZONTAL_HOLD_DELAY_MS) {
+      if (previousHoldMs < HORIZONTAL_HOLD_DELAY_MS) {
+        currentPiece.move(horizontalDirection, 0);
+        horizontalRepeatElapsedMs = horizontalHoldElapsedMs - HORIZONTAL_HOLD_DELAY_MS;
+      } else {
+        horizontalRepeatElapsedMs += elapsedMs;
+      }
+      while (horizontalRepeatElapsedMs >= HORIZONTAL_REPEAT_MS) {
+        currentPiece.move(horizontalDirection, 0);
+        horizontalRepeatElapsedMs -= HORIZONTAL_REPEAT_MS;
+      }
+    }
+  }
+
+  const softDropHeld = keyIsDown(DOWN_ARROW);
+  if (softDropHeld !== softDropWasHeld) {
+    softDropWasHeld = softDropHeld;
+    softDropHoldElapsedMs = 0;
+    softDropRepeatElapsedMs = 0;
+  } else if (softDropHeld) {
+    const previousHoldMs = softDropHoldElapsedMs;
+    softDropHoldElapsedMs += elapsedMs;
+    if (softDropHoldElapsedMs >= SOFT_DROP_HOLD_DELAY_MS) {
+      if (previousHoldMs < SOFT_DROP_HOLD_DELAY_MS) {
+        currentPiece.move(0, 1);
+        softDropRepeatElapsedMs = softDropHoldElapsedMs - SOFT_DROP_HOLD_DELAY_MS;
+      } else {
+        softDropRepeatElapsedMs += elapsedMs;
+      }
+      while (softDropRepeatElapsedMs >= SOFT_DROP_REPEAT_MS) {
+        currentPiece.move(0, 1);
+        softDropRepeatElapsedMs -= SOFT_DROP_REPEAT_MS;
+      }
+    }
+  }
 }
 
 function keyPressed(event) {
@@ -591,10 +711,21 @@ function keyPressed(event) {
     return false;
   }
 
+  if (key === 'p' || key === 'P') {
+    togglePause();
+    return false;
+  }
+  if (gamePaused) {
+    if (key === 'r' || key === 'R') restartGame();
+    return false;
+  }
+
   if (key === 'h' || key === 'H') handleModeRequest();
   else if (key === 'r' || key === 'R') restartGame();
   else if (key === 'f' || key === 'F') useFreezeItem();
-  else if (keyCode === LEFT_ARROW || keyCode === RIGHT_ARROW || keyCode === DOWN_ARROW) performOperation(() => {});
+  else if (keyCode === LEFT_ARROW) performOperation(() => currentPiece.move(-1, 0));
+  else if (keyCode === RIGHT_ARROW) performOperation(() => currentPiece.move(1, 0));
+  else if (keyCode === DOWN_ARROW) performOperation(() => currentPiece.move(0, 1));
   else if (keyCode === UP_ARROW) performOperation(() => currentPiece.rotate());
   else if (key === 'z' || key === 'Z') performOperation(() => currentPiece.rotate(-1));
   else if (key === 'x' || key === 'X') performOperation(() => currentPiece.rotate(2));
@@ -604,10 +735,15 @@ function keyPressed(event) {
   if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW, UP_ARROW, 32].includes(keyCode)) return false;
 }
 
+function keyReleased() {
+  if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW].includes(keyCode)) resetInputTimers();
+}
+
 function bindTouchControls() {
   const touchActions = {
     mode: handleModeRequest,
     restart: restartGame,
+    pause: togglePause,
     freeze: useFreezeItem,
     left: () => performOperation(() => currentPiece.move(-1, 0)),
     right: () => performOperation(() => currentPiece.move(1, 0)),

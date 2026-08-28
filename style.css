@@ -250,6 +250,7 @@ body {
     "left down right"
     "hold drop drop"
     "freeze freeze freeze"
+    "pause pause pause"
     "restart mode mode";
   gap: 6px;
   padding: 8px;
@@ -274,6 +275,7 @@ body {
 .touch-controls [data-action="hold"] { grid-area: hold; font-size: 12px; }
 .touch-controls [data-action="drop"] { grid-area: drop; font-size: 12px; }
 .touch-controls [data-action="freeze"] { grid-area: freeze; font-size: 12px; }
+.touch-controls [data-action="pause"] { grid-area: pause; font-size: 12px; }
 .touch-controls [data-action="restart"] { grid-area: restart; font-size: 11px; }
 .touch-controls [data-action="mode"] { grid-area: mode; font-size: 12px; }
 
