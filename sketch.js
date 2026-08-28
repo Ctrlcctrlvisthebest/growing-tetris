@@ -81,6 +81,7 @@ function setup() {
 function draw() {
   background(0);
   board.draw();
+  if (!gameOver) currentPiece.drawLandingPreview();
   currentPiece.draw();
 
   if (gameStarted && !gameOver && !gamePaused) {
@@ -109,7 +110,7 @@ class Board {
       for (let col = 0; col < COLS; col += 1) {
         const value = this.grid[row][col];
         fill(value || 20);
-        stroke(200);
+        stroke(value ? 0 : 200);
         strokeWeight(1);
         rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL);
       }
@@ -163,6 +164,30 @@ class Piece {
   draw() {
     this.shape.forEach(([dx, dy]) => drawCell(this.x + dx, this.y + dy, this.color));
     this.drawGrowthWarning();
+  }
+
+  getLandingY() {
+    let landingY = this.y;
+    while (board.isValid(this, this.x, landingY + 1)) landingY += 1;
+    return landingY;
+  }
+
+  drawLandingPreview() {
+    const landingY = this.getLandingY();
+    noFill();
+    stroke(165);
+    strokeWeight(6);
+    this.shape.forEach(([dx, dy]) => {
+      const col = this.x + dx;
+      const row = landingY + dy;
+      if (row < 0 || row >= ROWS) return;
+      rect(
+        BOARD_X + col * CELL + 2,
+        BOARD_Y + row * CELL + 2,
+        CELL - 4,
+        CELL - 4,
+      );
+    });
   }
 
   move(dx, dy) {
