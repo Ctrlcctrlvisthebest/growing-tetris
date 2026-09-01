@@ -15,24 +15,50 @@ const PIECES_PER_SPEED_LEVEL = 5;
 const GROWTH_SPEED_STEP_FRAMES = 12;
 const MIN_GROWTH_INTERVAL = 60;
 const SPEED_UP_NOTICE_FRAMES = 90;
-const MAX_ROTATION_KICK_DISTANCE = 4;
 
 const SHAPES = {
-  I: [[0, 0], [1, 0], [2, 0], [3, 0]],
-  O: [[0, 0], [1, 0], [1, 1], [0, 1]],
-  S: [[0, 1], [1, 0], [1, 1], [0, 2]],
-  Z: [[0, 0], [1, 1], [1, 2], [0, 1]],
-  L: [[0, 0], [1, 0], [2, 0], [2, 1]],
-  J: [[0, 1], [1, 1], [2, 1], [2, 0]],
-  T: [[0, 0], [0, 1], [0, 2], [1, 1]],
+  I: [[0, 1], [1, 1], [2, 1], [3, 1]],
+  O: [[1, 0], [2, 0], [1, 1], [2, 1]],
+  S: [[1, 0], [2, 0], [0, 1], [1, 1]],
+  Z: [[0, 0], [1, 0], [1, 1], [2, 1]],
+  L: [[2, 0], [0, 1], [1, 1], [2, 1]],
+  J: [[0, 0], [0, 1], [1, 1], [2, 1]],
+  T: [[1, 0], [0, 1], [1, 1], [2, 1]],
 };
 
 const COLORS = {
   I: '#38d8e8', O: '#ffc247', S: '#ff4c61', Z: '#5be078',
   L: '#ff9d45', J: '#ff659d', T: '#a879ff',
 };
+const ROTATION_PIVOTS = {
+  I: [1.5, 1.5],
+  O: [1.5, 0.5],
+  S: [1, 1], Z: [1, 1], L: [1, 1], J: [1, 1], T: [1, 1],
+};
+
+// Official SRS wall-kick data converted to canvas coordinates, where +y is down.
+const JLSTZ_KICKS = {
+  '0>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '1>0': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '1>2': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '2>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '2>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '3>2': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '3>0': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '0>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+};
+
+const I_KICKS = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '1>0': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  '2>1': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '3>2': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+};
 const PIECE_TYPES = Object.keys(SHAPES);
-const ROTATION_KICKS = createRotationKicks(MAX_ROTATION_KICK_DISTANCE);
 
 let board;
 let currentPiece;
@@ -155,10 +181,10 @@ class Piece {
     this.type = type;
     this.color = COLORS[type];
     this.shape = SHAPES[type].map(([x, y]) => [x, y]);
-    this.x = Math.floor(COLS / 2) - 1;
-    this.y = 0;
+    this.rotationState = 0;
     this.growthCounter = 0;
     this.warning = null;
+    positionPieceAtSpawn(this);
   }
 
   draw() {
@@ -199,30 +225,62 @@ class Piece {
   }
 
   rotate(turns = 1) {
-    const clockwiseTurns = turns === -1 ? 3 : turns;
-    let rotated = this.shape.map(([x, y]) => [x, y]);
-    for (let turn = 0; turn < clockwiseTurns; turn += 1) {
-      rotated = rotated.map(([x, y]) => [-y, x]);
+    if (turns === 2) {
+      const before = {
+        shape: this.shape.map(([x, y]) => [x, y]),
+        warning: this.warning ? [...this.warning] : null,
+        x: this.x,
+        y: this.y,
+        rotationState: this.rotationState,
+      };
+      if (this.rotateQuarter(1) && this.rotateQuarter(1)) return true;
+      this.shape = before.shape;
+      this.warning = before.warning;
+      this.x = before.x;
+      this.y = before.y;
+      this.rotationState = before.rotationState;
+      return false;
     }
-    const kick = ROTATION_KICKS.find(([dx, dy]) => (
+
+    return this.rotateQuarter(turns === -1 ? -1 : 1);
+  }
+
+  rotateQuarter(direction) {
+    const fromState = this.rotationState;
+    const toState = (fromState + direction + 4) % 4;
+    const rotated = this.shape.map((cell) => this.rotateCell(cell, direction));
+    const kickTable = this.type === 'I' ? I_KICKS : JLSTZ_KICKS;
+    const kickTests = this.type === 'O'
+      ? [[0, 0]]
+      : kickTable[`${fromState}>${toState}`];
+    const kick = kickTests.find(([dx, dy]) => (
       board.isValid(this, this.x + dx, this.y + dy, rotated)
     ));
     if (!kick) return false;
+
     this.shape = rotated;
     this.x += kick[0];
     this.y += kick[1];
+    this.rotationState = toState;
     if (this.warning) {
       if (directedGrowth) {
         this.warning = null;
         this.chooseWarning();
       } else {
-        for (let turn = 0; turn < clockwiseTurns; turn += 1) {
-          this.warning = [-this.warning[1], this.warning[0]];
-        }
+        this.warning = this.rotateCell(this.warning, direction);
       }
     }
     this.revalidateWarning();
     return true;
+  }
+
+  rotateCell([x, y], direction) {
+    const [pivotX, pivotY] = ROTATION_PIVOTS[this.type];
+    const relativeX = x - pivotX;
+    const relativeY = y - pivotY;
+    return direction === 1
+      ? [Math.round(pivotX - relativeY), Math.round(pivotY + relativeX)]
+      : [Math.round(pivotX + relativeY), Math.round(pivotY - relativeX)];
   }
 
   updateGrowth() {
@@ -294,23 +352,6 @@ class Piece {
   }
 }
 
-function createRotationKicks(maxDistance) {
-  const kicks = [];
-  for (let dx = -maxDistance; dx <= maxDistance; dx += 1) {
-    for (let dy = -maxDistance; dy <= maxDistance; dy += 1) {
-      if (Math.abs(dx) + Math.abs(dy) <= maxDistance) kicks.push([dx, dy]);
-    }
-  }
-  return kicks.sort((a, b) => {
-    const distanceDifference = Math.abs(a[0]) + Math.abs(a[1])
-      - Math.abs(b[0]) - Math.abs(b[1]);
-    if (distanceDifference !== 0) return distanceDifference;
-    if (Math.abs(a[1]) !== Math.abs(b[1])) return Math.abs(a[1]) - Math.abs(b[1]);
-    if (a[1] !== b[1]) return a[1] - b[1];
-    return Math.abs(a[0]) - Math.abs(b[0]);
-  });
-}
-
 function drawCell(col, row, cellColor) {
   fill(cellColor);
   stroke(50);
@@ -378,12 +419,14 @@ function snapshotPiece(piece) {
   return {
     type: piece.type,
     shape: piece.shape.map(([x, y]) => [x, y]),
+    rotationState: piece.rotationState,
   };
 }
 
 function restorePiece(savedPiece) {
   const piece = new Piece(savedPiece.type);
   piece.shape = savedPiece.shape.map(([x, y]) => [x, y]);
+  piece.rotationState = savedPiece.rotationState ?? 0;
   positionPieceAtSpawn(piece);
   return piece;
 }
