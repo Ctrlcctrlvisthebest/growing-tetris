@@ -61,7 +61,7 @@ class Board {
      for (int i=rows-1;i>=0;i--) { //go from bottom row to top row
         boolean full = true; //assume a row is a full
           for (int j=0;j<cols;j++) { // go through all columns left to right
-            if (board.grid[i][j]==0) { // if the color at a cell is 0, we break out of the loop
+            if (grid[i][j]==0) { // if the color at a cell is 0, we break out of the loop
               full = false;
               break;
             }
@@ -71,12 +71,12 @@ class Board {
         linesCleared++;
           for (int rr = i; rr>0; rr--) { // again go backwards through rows
             for (int c=0;c<cols;c++) { //scroll through all cols
-                board.grid[rr][c] =board.grid[rr-1][c]; //set the current cell the the cell one row up 
+                grid[rr][c] = grid[rr-1][c]; //set the current cell the the cell one row up 
             }
           }
         // clear the top row – we need to do this since everything in row 0 was copied to row 1, but never cleared!
           for (int c = 0; c < cols; c++) {
-           board.grid[0][c]=0;
+           grid[0][c]=0;
           }
           i++; // increase r by 1 to recheck this row after shifting
         }

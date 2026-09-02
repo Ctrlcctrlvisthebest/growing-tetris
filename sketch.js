@@ -5,6 +5,8 @@ const BOARD_X = 100;
 const BOARD_Y = 50;
 const PREVIEW_COUNT = 5;
 const FALL_INTERVAL_MS = 500;
+const LOCK_DELAY_MS = 650;
+const MAX_LOCK_DELAY_RESETS = 15;
 const HORIZONTAL_HOLD_DELAY_MS = 140;
 const HORIZONTAL_REPEAT_MS = 70;
 const SOFT_DROP_HOLD_DELAY_MS = 60;
@@ -15,6 +17,7 @@ const PIECES_PER_SPEED_LEVEL = 5;
 const GROWTH_SPEED_STEP_FRAMES = 12;
 const MIN_GROWTH_INTERVAL = 60;
 const SPEED_UP_NOTICE_FRAMES = 90;
+const PIECE_REPEAT_WEIGHT_BY_AGE = [0, 0.25, 0.5, 0.75];
 
 const SHAPES = {
   I: [[0, 1], [1, 1], [2, 1], [3, 1]],
@@ -63,6 +66,7 @@ const PIECE_TYPES = Object.keys(SHAPES);
 let board;
 let currentPiece;
 let nextQueue = [];
+let pieceGenerationHistory = [];
 let heldPiece = null;
 let canHold = true;
 let score = 0;
@@ -72,6 +76,9 @@ let gameOver = false;
 let gameStarted = false;
 let gamePaused = false;
 let fallElapsedMs = 0;
+let lockElapsedMs = 0;
+let lockDelayResetCount = 0;
+let hardOperationInProgress = false;
 let heldHorizontalDirection = 0;
 let horizontalHoldElapsedMs = 0;
 let horizontalRepeatElapsedMs = 0;
@@ -92,6 +99,7 @@ let freezeButton;
 let pauseButton;
 let startScreen;
 
+/** 初始化 p5 画布、页面控件和第一局游戏；由 p5 在页面加载后调用一次。 */
 function setup() {
   const canvas = createCanvas(500, 700);
   canvas.parent('game-canvas');
@@ -104,6 +112,10 @@ function setup() {
   bindStartScreen();
 }
 
+/**
+ * 渲染并推进一帧游戏。
+ * 暂停、结束或尚未开始时仍绘制界面，但不会更新输入、下落和生长状态。
+ */
 function draw() {
   background(0);
   board.draw();
@@ -127,10 +139,12 @@ function draw() {
 }
 
 class Board {
+  /** 创建一个 20×10 的空棋盘；null 表示空格，颜色字符串表示已锁定方块。 */
   constructor() {
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   }
 
+  /** 逐格绘制棋盘，并用不同描边区分空格和已锁定格。 */
   draw() {
     for (let row = 0; row < ROWS; row += 1) {
       for (let col = 0; col < COLS; col += 1) {
@@ -143,6 +157,10 @@ class Board {
     }
   }
 
+  /**
+   * 判断指定形状能否放在目标坐标。
+   * 允许方块暂时位于棋盘顶部之外，但不允许越过左右、底部或重叠锁定格。
+   */
   isValid(piece, newX, newY, shape = piece.shape) {
     return shape.every(([dx, dy]) => {
       const col = newX + dx;
@@ -152,6 +170,7 @@ class Board {
     });
   }
 
+  /** 将活动方块写入棋盘网格，使它成为后续碰撞检测的一部分。 */
   lock(piece) {
     piece.shape.forEach(([dx, dy]) => {
       const col = piece.x + dx;
@@ -162,6 +181,10 @@ class Board {
     });
   }
 
+  /**
+   * 删除所有填满的行，在顶部补空行，并返回本次消除的行数。
+   * 删除后重新检查同一行位置，以支持一次消除多行。
+   */
   clearLines() {
     let cleared = 0;
     for (let row = ROWS - 1; row >= 0; row -= 1) {
@@ -177,6 +200,7 @@ class Board {
 }
 
 class Piece {
+  /** 根据方块类型复制出生形状、设置颜色，并计算居中的出生位置。 */
   constructor(type) {
     this.type = type;
     this.color = COLORS[type];
@@ -187,17 +211,20 @@ class Piece {
     positionPieceAtSpawn(this);
   }
 
+  /** 绘制活动方块及其待生长位置提示。 */
   draw() {
     this.shape.forEach(([dx, dy]) => drawCell(this.x + dx, this.y + dy, this.color));
     this.drawGrowthWarning();
   }
 
+  /** 模拟垂直下落直到下一格发生碰撞，返回幽灵落点的 y 坐标。 */
   getLandingY() {
     let landingY = this.y;
     while (board.isValid(this, this.x, landingY + 1)) landingY += 1;
     return landingY;
   }
 
+  /** 在预计落点绘制粗边框，不改变活动方块的真实位置。 */
   drawLandingPreview() {
     const landingY = this.getLandingY();
     noFill();
@@ -216,14 +243,23 @@ class Piece {
     });
   }
 
+  /**
+   * 尝试移动方块；成功时更新位置和生长提示，失败时保持原状。
+   * 落地后的横向调整会在允许次数内重新开始锁定计时。
+   */
   move(dx, dy) {
     if (!board.isValid(this, this.x + dx, this.y + dy)) return false;
     this.x += dx;
     this.y += dy;
+    if (dx !== 0) resetLockDelayAfterAdjustment(this);
     this.revalidateWarning();
     return true;
   }
 
+  /**
+   * 尝试旋转方块。turns 为 1/-1/2 时分别表示顺时针、逆时针和 180°。
+   * 180° 由两次 SRS 四分之一旋转组成，任一步失败都会完整回滚。
+   */
   rotate(turns = 1) {
     if (turns === 2) {
       const before = {
@@ -232,6 +268,8 @@ class Piece {
         x: this.x,
         y: this.y,
         rotationState: this.rotationState,
+        lockElapsedMs,
+        lockDelayResetCount,
       };
       if (this.rotateQuarter(1) && this.rotateQuarter(1)) return true;
       this.shape = before.shape;
@@ -239,12 +277,15 @@ class Piece {
       this.x = before.x;
       this.y = before.y;
       this.rotationState = before.rotationState;
+      lockElapsedMs = before.lockElapsedMs;
+      lockDelayResetCount = before.lockDelayResetCount;
       return false;
     }
 
     return this.rotateQuarter(turns === -1 ? -1 : 1);
   }
 
+  /** 使用对应方块的 SRS 踢墙表完成一次 90° 旋转。 */
   rotateQuarter(direction) {
     const fromState = this.rotationState;
     const toState = (fromState + direction + 4) % 4;
@@ -262,6 +303,7 @@ class Piece {
     this.x += kick[0];
     this.y += kick[1];
     this.rotationState = toState;
+    resetLockDelayAfterAdjustment(this);
     if (this.warning) {
       if (directedGrowth) {
         this.warning = null;
@@ -274,6 +316,7 @@ class Piece {
     return true;
   }
 
+  /** 围绕当前方块类型的 SRS 旋转中心计算单个格子的旋转后坐标。 */
   rotateCell([x, y], direction) {
     const [pivotX, pivotY] = ROTATION_PIVOTS[this.type];
     const relativeX = x - pivotX;
@@ -283,6 +326,7 @@ class Piece {
       : [Math.round(pivotX + relativeY), Math.round(pivotY - relativeX)];
   }
 
+  /** 普通模式下按帧累计生长计时，先产生警告，再在周期结束时生长。 */
   updateGrowth() {
     const interval = getGrowthInterval();
     this.growthCounter += 1;
@@ -292,6 +336,7 @@ class Piece {
     }
   }
 
+  /** 将仍然有效的警告格加入形状，然后清空提示并重新开始生长周期。 */
   commitWarningGrowth() {
     if (!this.warning) this.chooseWarning();
     if (this.warning && this.isGrowthCellValid(...this.warning)) {
@@ -301,10 +346,12 @@ class Piece {
     this.growthCounter = 0;
   }
 
+  /** 判断局部坐标是否已经属于当前形状。 */
   containsCell(x, y) {
     return this.shape.some(([sx, sy]) => sx === x && sy === y);
   }
 
+  /** 判断候选生长格是否未重复、在棋盘内且没有与锁定格重叠。 */
   isGrowthCellValid(x, y) {
     if (this.containsCell(x, y)) return false;
     const col = this.x + x;
@@ -312,6 +359,10 @@ class Piece {
     return col >= 0 && col < COLS && row >= 0 && row < ROWS && !board.grid[row][col];
   }
 
+  /**
+   * 收集与当前形状相邻的合法格并随机选择警告位置。
+   * Directed growth 开启时只收集每个格子右侧的候选位置。
+   */
   chooseWarning() {
     const directions = directedGrowth
       ? [[1, 0]]
@@ -331,6 +382,7 @@ class Piece {
     if (candidates.length) this.warning = random(candidates);
   }
 
+  /** 移动或旋转后重新验证警告格；失效时尝试选择新的候选位置。 */
   revalidateWarning() {
     if (this.warning && !this.isGrowthCellValid(...this.warning)) {
       this.warning = null;
@@ -338,6 +390,7 @@ class Piece {
     }
   }
 
+  /** 以脉冲透明度绘制待生长格，让玩家能提前看到生长方向。 */
   drawGrowthWarning() {
     if (!this.warning) return;
     this.revalidateWarning();
@@ -352,6 +405,7 @@ class Piece {
   }
 }
 
+/** 在棋盘坐标上绘制一个具有统一描边的方格。 */
 function drawCell(col, row, cellColor) {
   fill(cellColor);
   stroke(50);
@@ -359,10 +413,40 @@ function drawCell(col, row, cellColor) {
   rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL);
 }
 
+/** 持续生成方块类型，直到预览队列达到固定长度。 */
 function fillNextQueue() {
-  while (nextQueue.length < PREVIEW_COUNT) nextQueue.push(random(PIECE_TYPES));
+  while (nextQueue.length < PREVIEW_COUNT) nextQueue.push(generatePieceType());
 }
 
+/**
+ * 按最近出现时间进行加权随机，减少连续重复方块。
+ * 越近期出现的类型权重越低，超过历史窗口的类型恢复为完整权重。
+ */
+function generatePieceType() {
+  const weights = PIECE_TYPES.map((type) => {
+    const age = pieceGenerationHistory.indexOf(type);
+    return age === -1 || age >= PIECE_REPEAT_WEIGHT_BY_AGE.length
+      ? 1
+      : PIECE_REPEAT_WEIGHT_BY_AGE[age];
+  });
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = Math.random() * totalWeight;
+  let selectedType = PIECE_TYPES[PIECE_TYPES.length - 1];
+
+  for (let index = 0; index < PIECE_TYPES.length; index += 1) {
+    roll -= weights[index];
+    if (roll < 0) {
+      selectedType = PIECE_TYPES[index];
+      break;
+    }
+  }
+
+  pieceGenerationHistory.unshift(selectedType);
+  pieceGenerationHistory = pieceGenerationHistory.slice(0, PIECE_REPEAT_WEIGHT_BY_AGE.length);
+  return selectedType;
+}
+
+/** 从预览队列头部创建活动方块，并立即补足队列。 */
 function takeNextPiece() {
   fillNextQueue();
   const piece = new Piece(nextQueue.shift());
@@ -370,6 +454,10 @@ function takeNextPiece() {
   return piece;
 }
 
+/**
+ * 锁定当前方块、结算消行和奖励，然后生成下一方块。
+ * 同时重置本方块专属的下落、锁定和 Hold 状态，并检查游戏结束。
+ */
 function lockAndSpawn() {
   board.lock(currentPiece);
   const lines = board.clearLines();
@@ -383,18 +471,27 @@ function lockAndSpawn() {
   currentPiece = takeNextPiece();
   canHold = true;
   fallElapsedMs = 0;
+  lockElapsedMs = 0;
+  lockDelayResetCount = 0;
   if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) endGame();
-  if (hardMode && hardOperationCount % 4 !== 0 && !gameOver && !isGrowthFrozen()) currentPiece.chooseWarning();
+  if (hardMode && !hardOperationInProgress && hardOperationCount % 4 !== 0
+      && !gameOver && !isGrowthFrozen()) currentPiece.chooseWarning();
 }
 
+/**
+ * 保存或交换当前方块；每个活动方块只能成功使用一次。
+ * 交换后的形状会重新居中，若无法安全出生则回滚队列并返回 false。
+ */
 function holdCurrentPiece() {
-  if (gameOver || !canHold) return;
+  if (gameOver || !canHold) return false;
   const outgoingPiece = snapshotPiece(currentPiece);
   let incomingPiece;
   let queueBeforeHold = null;
+  let generationHistoryBeforeHold = null;
 
   if (heldPiece === null) {
     queueBeforeHold = [...nextQueue];
+    generationHistoryBeforeHold = [...pieceGenerationHistory];
     incomingPiece = takeNextPiece();
   } else {
     incomingPiece = restorePiece(heldPiece);
@@ -405,6 +502,7 @@ function holdCurrentPiece() {
   // centered spawn position has been found.
   if (!board.isValid(incomingPiece, incomingPiece.x, incomingPiece.y)) {
     if (queueBeforeHold) nextQueue = queueBeforeHold;
+    if (generationHistoryBeforeHold) pieceGenerationHistory = generationHistoryBeforeHold;
     return false;
   }
 
@@ -412,9 +510,12 @@ function holdCurrentPiece() {
   currentPiece = incomingPiece;
   canHold = false;
   fallElapsedMs = 0;
+  lockElapsedMs = 0;
+  lockDelayResetCount = 0;
   return true;
 }
 
+/** 创建 Hold 所需的纯数据快照，避免保存活动方块的计时和警告状态。 */
 function snapshotPiece(piece) {
   return {
     type: piece.type,
@@ -423,6 +524,7 @@ function snapshotPiece(piece) {
   };
 }
 
+/** 从 Hold 快照重建独立 Piece 实例，并重新计算出生位置。 */
 function restorePiece(savedPiece) {
   const piece = new Piece(savedPiece.type);
   piece.shape = savedPiece.shape.map(([x, y]) => [x, y]);
@@ -431,6 +533,7 @@ function restorePiece(savedPiece) {
   return piece;
 }
 
+/** 根据形状实际边界将任意大小、旋转或生长后的方块水平居中到顶部。 */
 function positionPieceAtSpawn(piece) {
   const xs = piece.shape.map(([x]) => x);
   const ys = piece.shape.map(([, y]) => y);
@@ -442,24 +545,30 @@ function positionPieceAtSpawn(piece) {
   piece.y = -minY;
 }
 
+/** 将当前方块降至最低合法位置、按距离加分并立即锁定。 */
 function hardDrop() {
-  if (gameOver) return;
+  if (gameOver) return false;
   while (currentPiece.move(0, 1)) score += 1;
   lockAndSpawn();
+  return true;
 }
 
+/** 根据累计锁定方块数计算从 1 开始的自动生长速度等级。 */
 function getGrowthLevel() {
   return Math.floor(piecesLocked / PIECES_PER_SPEED_LEVEL) + 1;
 }
 
+/** 结合玩家滑杆和自动等级计算生长间隔，并限制最低帧数。 */
 function getGrowthInterval() {
   const progressReduction = (getGrowthLevel() - 1) * GROWTH_SPEED_STEP_FRAMES;
   return Math.max(MIN_GROWTH_INTERVAL, 330 - growthSpeed * 24 - progressReduction);
 }
 
+/** 清空所有单局状态并创建全新棋盘，同时保留当前普通/困难模式选择。 */
 function restartGame() {
   board = new Board();
   nextQueue = [];
+  pieceGenerationHistory = [];
   heldPiece = null;
   canHold = true;
   score = 0;
@@ -468,6 +577,9 @@ function restartGame() {
   gameOver = false;
   gamePaused = false;
   fallElapsedMs = 0;
+  lockElapsedMs = 0;
+  lockDelayResetCount = 0;
+  hardOperationInProgress = false;
   resetInputTimers();
   hardOperationCount = 0;
   freezeItems = 0;
@@ -479,6 +591,7 @@ function restartGame() {
   updatePauseButton();
 }
 
+/** 标记游戏结束并同步所有会受结束状态影响的按钮。 */
 function endGame() {
   gameOver = true;
   updateModeButton();
@@ -486,6 +599,7 @@ function endGame() {
   updatePauseButton();
 }
 
+/** 缓存页面控件节点，避免在每一帧反复查询 DOM。 */
 function cacheControls() {
   modeButton = document.querySelector('[data-action="mode"]');
   speedSlider = document.querySelector('#growth-speed');
@@ -496,6 +610,7 @@ function cacheControls() {
   startScreen = document.querySelector('#start-screen');
 }
 
+/** 响应首次开始操作，隐藏开始页并从零开始累计游戏计时。 */
 function startGame() {
   if (gameStarted) return;
   gameStarted = true;
@@ -508,6 +623,7 @@ function startGame() {
   }
 }
 
+/** 为触屏设备绑定点击开始；桌面端继续使用空格键开始。 */
 function bindStartScreen() {
   if (!startScreen) return;
   startScreen.addEventListener('pointerdown', (event) => {
@@ -517,17 +633,21 @@ function bindStartScreen() {
   });
 }
 
+/** 根据模式和暂停状态刷新模式按钮、速度滑杆及定向生长控件。 */
 function updateModeButton() {
   if (modeButton) {
     if (!hardMode) modeButton.textContent = 'START HARD MODE';
-    else if (gameOver) modeButton.textContent = 'EXIT HARD MODE';
-    else modeButton.textContent = 'HARD MODE';
+    else modeButton.textContent = 'EXIT HARD MODE';
     modeButton.disabled = gamePaused && !gameOver;
   }
   if (speedSlider) speedSlider.disabled = hardMode || gamePaused;
   if (directedGrowthCheckbox) directedGrowthCheckbox.disabled = gamePaused;
 }
 
+/**
+ * 读取生长相关控件的初始值并监听后续变化。
+ * 切换定向生长时会重新选择警告格，保证提示符合新规则。
+ */
 function bindGrowthControls() {
   if (!speedSlider || !speedOutput) return;
 
@@ -549,14 +669,10 @@ function bindGrowthControls() {
   });
 }
 
+/** 在普通与困难模式之间切换，并按新模式重新开局。 */
 function handleModeRequest() {
-  if (!hardMode) {
-    hardMode = true;
-    restartGame();
-  } else if (gameOver) {
-    hardMode = false;
-    restartGame();
-  }
+  hardMode = !hardMode;
+  restartGame();
 }
 
 function togglePause() {
@@ -601,12 +717,18 @@ function updateFreezeButton() {
 }
 
 function performOperation(action) {
-  if (gameOver || gamePaused) return;
+  if (gameOver || gamePaused) return false;
 
   if (isGrowthFrozen()) {
-    action();
-    return;
+    return action() !== false;
   }
+
+  const pieceBefore = currentPiece;
+  const growthBefore = hardMode ? {
+    shape: currentPiece.shape.map(([x, y]) => [x, y]),
+    warning: currentPiece.warning ? [...currentPiece.warning] : null,
+    growthCounter: currentPiece.growthCounter,
+  } : null;
 
   // In hard mode, the first input previews a cell and the fourth grows it.
   // Growth happens before carrying out input four so Hold and hard drop
@@ -615,14 +737,34 @@ function performOperation(action) {
     currentPiece.commitWarningGrowth();
   }
 
-  action();
-  if (!hardMode || gameOver) return;
+  hardOperationInProgress = hardMode;
+  const succeeded = action() !== false;
+  hardOperationInProgress = false;
+
+  if (!succeeded) {
+    if (growthBefore && currentPiece === pieceBefore) {
+      currentPiece.shape = growthBefore.shape;
+      currentPiece.warning = growthBefore.warning;
+      currentPiece.growthCounter = growthBefore.growthCounter;
+    }
+    return false;
+  }
+  if (!hardMode || gameOver) return true;
 
   hardOperationCount += 1;
-  if (hardOperationCount % 4 === 1) {
+  const spawnedNewPiece = currentPiece !== pieceBefore;
+  if (hardOperationCount % 4 === 1 || (spawnedNewPiece && hardOperationCount % 4 !== 0)) {
     currentPiece.warning = null;
     currentPiece.chooseWarning();
   }
+  return true;
+}
+
+function resetLockDelayAfterAdjustment(piece) {
+  const isGrounded = !board.isValid(piece, piece.x, piece.y + 1);
+  if (!isGrounded || lockDelayResetCount >= MAX_LOCK_DELAY_RESETS) return;
+  lockElapsedMs = 0;
+  lockDelayResetCount += 1;
 }
 
 function drawInterface() {
@@ -716,10 +858,18 @@ function resetInputTimers() {
 }
 
 function updateFalling(elapsedMs) {
+  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y + 1)) {
+    fallElapsedMs = 0;
+    lockElapsedMs += elapsedMs;
+    if (lockElapsedMs >= LOCK_DELAY_MS) lockAndSpawn();
+    return;
+  }
+
+  lockElapsedMs = 0;
   fallElapsedMs += elapsedMs;
   if (fallElapsedMs < FALL_INTERVAL_MS) return;
   fallElapsedMs -= FALL_INTERVAL_MS;
-  if (!currentPiece.move(0, 1)) lockAndSpawn();
+  currentPiece.move(0, 1);
 }
 
 function handleHeldKeys(elapsedMs) {
