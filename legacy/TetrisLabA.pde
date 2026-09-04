@@ -5,7 +5,7 @@ int rows = 20;
 int boardWidth=300;
 int boardHeight=600;
 int cellSize;
-int framesPerFall = 30; // piece falls every 30 frames
+int framesPerFall = 30; // 方块每 30 帧自动下落一次。
 int fallCounter = 0;
 boolean leftHeld, rightHeld, downHeld, upHeld;
 int leftCounter = 0, rightCounter = 0;
@@ -17,13 +17,13 @@ ArrayList<Character> nextQueue = new ArrayList<Character>();
 Piece heldPiece;
 boolean canHold = true;
 int previewCount = 5;
-boolean gameOver = false;  // true if the game is paused because of game over
+boolean gameOver = false;  // 游戏结束后设为真，以停止状态更新。
 
 void setup() {
   size(500, 700);
-  // Compute a cell size based on boardHeight and rows
+  // 根据棋盘高度和行数计算单格尺寸。
   cellSize = boardHeight/rows;
-  // Create the board
+  // 创建棋盘。
   board = new Board(cols,rows,cellSize);
   fillNextQueue();
   currentPiece = takeNextPiece();
@@ -136,7 +136,7 @@ void lockAndSpawn(){
 void drawUI() {
   fill(255);
   textSize(20);
-  text("Score: " + score, 30,30); //need the x and y coordinates
+  text("Score: " + score, 30,30); // 在画布左上角显示当前分数。
   text("Hold:", 20, 55);
   if (heldPiece != null) heldPiece.drawPreview(20, 75);
 

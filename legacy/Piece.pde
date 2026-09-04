@@ -1,6 +1,6 @@
 class Piece {
-  int x, y;          // grid coordinates
-  int[][] shape;     // offsets for blocks
+  int x, y;          // 棋盘坐标
+  int[][] shape;     // 各组成格相对方块原点的偏移
   color pieceColor;
   char type;
   Board board;
@@ -11,24 +11,23 @@ class Piece {
   Piece(Board board, char type) {
     this.board = board;
     this.type = type;
-    // Coordinates for the top-center for where pieces will enter the board
+    // 将方块放在棋盘顶部中央的出生位置。
     x = board.cols/2-1;
     y =0;
 
 
-    // Call the setShapeAndColor method
+    // 根据类型设置形状和颜色。
   setShapeAndColor(type);
   }
  
-   // The first shape has been completed for you
+   // 根据方块类型建立局部坐标数组和显示颜色。
   void setShapeAndColor(char t) {
     if (t == 'I') {
-     shape = new int[][]{{0,0}, {1,0}, {2,0}, {3,0}}; // think of this as an array of coordinates
+     shape = new int[][]{{0,0}, {1,0}, {2,0}, {3,0}}; // 每个二元数组表示一个组成格的局部坐标。
      pieceColor = color(0, 255, 255);
     } else if (t == 'O') {
       shape = new int[][]{{0,0}, {1,0}, {1,1}, {0,1}};
       pieceColor = color(255, 186, 38);
-     // complete this method
    } else if (t == 'S') {
       shape = new int[][]{{0,1}, {1,0}, {1,1}, {0,2}};
       pieceColor = color(255, 0, 0);
@@ -47,26 +46,25 @@ class Piece {
       }
   }
   void drawPiece() {
-    stroke(50); // Set the outline color for each block of the piece
-    // Loop through each block in the shape array
+    stroke(50); // 设置每个组成格的描边颜色。
+    // 遍历形状数组中的所有组成格。
       for (int i = 0; i < shape.length; i++) {
-        // Calculate the column and row on the grid for this block
-        int c =shape[i][0]; // x position in grid + block offset in shape
-        int r =shape[i][1] ; // y position in grid + block offset in shape
+        // 读取当前组成格在形状内部的列、行偏移。
+        int c =shape[i][0]; // 形状内部的横向偏移
+        int r =shape[i][1] ; // 形状内部的纵向偏移
         
-        // Convert grid coordinates to actual pixel positions on the canvas
-             //  Hint: think about the offsets and cellSize
+        // 将棋盘坐标转换为画布上的像素坐标。
 
-        int px = board.xOffset+(x+c)*cellSize;// 
-        int py =board.yOffset+(y+r)*cellSize; // 
-        fill(pieceColor); // Set the fill color for this block
-        rect(px,py,cellSize,cellSize); // Draw the rectangle for the block
+        int px = board.xOffset+(x+c)*cellSize;
+        int py =board.yOffset+(y+r)*cellSize;
+        fill(pieceColor); // 设置当前组成格的填充颜色。
+        rect(px,py,cellSize,cellSize); // 绘制当前组成格。
       }
       drawGrowthWarning();
   }
 
-  // A piece grows in two stages: show a warning, then add that cell.
-  // The interval becomes shorter as more pieces are locked.
+  // 方块分两个阶段生长：先显示警告，再加入目标格。
+  // 已锁定方块越多，生长间隔越短。
   void updateGrowth() {
     int growthInterval = max(70, 210 - piecesLocked * 7);
     growthCounter++;
@@ -211,8 +209,8 @@ class Piece {
   void turn(){
     int[][] newShape = new int[shape.length][2];
     for (int i = 0; i < shape.length; i++) {
-      newShape[i][0] =-shape[i][1];// Remember (x, y) → (-y, x)
-      newShape[i][1] =shape[i][0];       // Remember (x, y) → (-y, x)
+      newShape[i][0] =-shape[i][1];// 顺时针旋转时，新横坐标取原纵坐标的相反数。
+      newShape[i][1] =shape[i][0]; // 顺时针旋转时，新纵坐标取原横坐标。
     }
     int[][] oldShape = shape;
     shape = newShape;
@@ -229,13 +227,13 @@ class Piece {
     }
   }
   void drawPreview(int px, int py) {
-    int previewSize = (int)(cellSize/2);  // shrink cellSize by 2
+    int previewSize = (int)(cellSize/2);  // 预览格尺寸为正式格的一半。
     for (int i = 0; i < shape.length; i++) {
       int bx =px+(shape[i][0]*previewSize);
-      int by =py+shape[i][1]*previewSize; //complete these lines
+      int by =py+shape[i][1]*previewSize; // 计算预览格的纵向位置。
       fill(pieceColor);
       stroke(50);
-      rect(bx, by, previewSize, previewSize); // complete this
+      rect(bx, by, previewSize, previewSize); // 绘制预览格。
     }
   }
 }

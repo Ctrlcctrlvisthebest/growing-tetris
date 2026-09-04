@@ -11,12 +11,13 @@ const HORIZONTAL_HOLD_DELAY_MS = 140;
 const HORIZONTAL_REPEAT_MS = 70;
 const SOFT_DROP_HOLD_DELAY_MS = 60;
 const SOFT_DROP_REPEAT_MS = 45;
-const FREEZE_DURATION_FRAMES = 8 * 60;
+const FREEZE_DURATION_MS = 8_000;
 const GROWTH_WARNING_FRAMES = 45;
 const PIECES_PER_SPEED_LEVEL = 5;
 const GROWTH_SPEED_STEP_FRAMES = 12;
 const MIN_GROWTH_INTERVAL = 60;
 const SPEED_UP_NOTICE_FRAMES = 90;
+const LINE_CLEAR_NOTICE_FRAMES = 90;
 const PIECE_REPEAT_WEIGHT_BY_AGE = [0, 0.25, 0.5, 0.75];
 
 const SHAPES = {
@@ -39,7 +40,7 @@ const ROTATION_PIVOTS = {
   S: [1, 1], Z: [1, 1], L: [1, 1], J: [1, 1], T: [1, 1],
 };
 
-// Official SRS wall-kick data converted to canvas coordinates, where +y is down.
+// 标准超级旋转系统的踢墙数据已转换为画布坐标系，其中纵轴正方向向下。
 const JLSTZ_KICKS = {
   '0>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
   '1>0': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
@@ -72,6 +73,7 @@ let canHold = true;
 let score = 0;
 let piecesLocked = 0;
 let speedUpNoticeFrames = 0;
+let lineClearNotice = null;
 let gameOver = false;
 let gameStarted = false;
 let gamePaused = false;
@@ -90,7 +92,7 @@ let hardOperationCount = 0;
 let growthSpeed = 3;
 let directedGrowth = false;
 let freezeItems = 0;
-let freezeFramesRemaining = 0;
+let freezeRemainingMs = 0;
 let modeButton;
 let speedSlider;
 let speedOutput;
@@ -99,7 +101,7 @@ let freezeButton;
 let pauseButton;
 let startScreen;
 
-/** 初始化 p5 画布、页面控件和第一局游戏；由 p5 在页面加载后调用一次。 */
+/** 初始化游戏画布、页面控件和第一局游戏；由绘图库在页面加载后调用一次。 */
 function setup() {
   const canvas = createCanvas(500, 700);
   canvas.parent('game-canvas');
@@ -119,15 +121,16 @@ function setup() {
 function draw() {
   background(0);
   board.draw();
-  if (!gameOver) currentPiece.drawLandingPreview();
-  currentPiece.draw();
+  if (!gameOver) {
+    currentPiece.drawLandingPreview();
+    currentPiece.draw();
+  }
 
   if (gameStarted && !gameOver && !gamePaused) {
     const elapsedMs = Math.min(deltaTime, 100);
     handleHeldKeys(elapsedMs);
-    if (freezeFramesRemaining > 0) {
-      freezeFramesRemaining -= 1;
-      if (freezeFramesRemaining % 15 === 0) updateFreezeButton();
+    if (isGrowthFrozen()) {
+      updateFreezeTimer(elapsedMs);
     } else if (!hardMode) {
       currentPiece.updateGrowth();
     }
@@ -135,11 +138,16 @@ function draw() {
     if (speedUpNoticeFrames > 0) speedUpNoticeFrames -= 1;
   }
 
+  if (gameStarted && !gamePaused && lineClearNotice?.framesRemaining > 0) {
+    lineClearNotice.framesRemaining -= 1;
+    if (lineClearNotice.framesRemaining <= 0) lineClearNotice = null;
+  }
+
   drawInterface();
 }
 
 class Board {
-  /** 创建一个 20×10 的空棋盘；null 表示空格，颜色字符串表示已锁定方块。 */
+  /** 创建一个 20×10 的空棋盘；空值表示空格，颜色字符串表示已锁定方块。 */
   constructor() {
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   }
@@ -161,8 +169,10 @@ class Board {
    * 判断指定形状能否放在目标坐标。
    * 允许方块暂时位于棋盘顶部之外，但不允许越过左右、底部或重叠锁定格。
    */
-  isValid(piece, newX, newY, shape = piece.shape) {
+  isValid(newX, newY, shape) {
+    if (!Array.isArray(shape) || shape.length === 0) return false;
     return shape.every(([dx, dy]) => {
+      if (!Number.isInteger(dx) || !Number.isInteger(dy)) return false;
       const col = newX + dx;
       const row = newY + dy;
       return col >= 0 && col < COLS && row < ROWS
@@ -170,15 +180,18 @@ class Board {
     });
   }
 
-  /** 将活动方块写入棋盘网格，使它成为后续碰撞检测的一部分。 */
+  /** 将活动方块写入棋盘网格，并返回是否有组成格锁定在棋盘顶部之外。 */
   lock(piece) {
+    let toppedOut = false;
     piece.shape.forEach(([dx, dy]) => {
       const col = piece.x + dx;
       const row = piece.y + dy;
+      if (row < 0) toppedOut = true;
       if (row >= 0 && row < ROWS && col >= 0 && col < COLS) {
         this.grid[row][col] = piece.color;
       }
     });
+    return toppedOut;
   }
 
   /**
@@ -217,10 +230,10 @@ class Piece {
     this.drawGrowthWarning();
   }
 
-  /** 模拟垂直下落直到下一格发生碰撞，返回幽灵落点的 y 坐标。 */
+  /** 模拟垂直下落直到下一格发生碰撞，返回幽灵落点的纵坐标。 */
   getLandingY() {
     let landingY = this.y;
-    while (board.isValid(this, this.x, landingY + 1)) landingY += 1;
+    while (board.isValid(this.x, landingY + 1, this.shape)) landingY += 1;
     return landingY;
   }
 
@@ -248,7 +261,7 @@ class Piece {
    * 落地后的横向调整会在允许次数内重新开始锁定计时。
    */
   move(dx, dy) {
-    if (!board.isValid(this, this.x + dx, this.y + dy)) return false;
+    if (!board.isValid(this.x + dx, this.y + dy, this.shape)) return false;
     this.x += dx;
     this.y += dy;
     if (dx !== 0) resetLockDelayAfterAdjustment(this);
@@ -257,8 +270,8 @@ class Piece {
   }
 
   /**
-   * 尝试旋转方块。turns 为 1/-1/2 时分别表示顺时针、逆时针和 180°。
-   * 180° 由两次 SRS 四分之一旋转组成，任一步失败都会完整回滚。
+   * 尝试旋转方块。参数为 1、-1、2 时分别表示顺时针、逆时针和 180°。
+   * 180° 由两次超级旋转系统的四分之一旋转组成，任一步失败都会完整回滚。
    */
   rotate(turns = 1) {
     if (turns === 2) {
@@ -285,7 +298,7 @@ class Piece {
     return this.rotateQuarter(turns === -1 ? -1 : 1);
   }
 
-  /** 使用对应方块的 SRS 踢墙表完成一次 90° 旋转。 */
+  /** 使用对应方块的超级旋转系统踢墙表完成一次 90° 旋转。 */
   rotateQuarter(direction) {
     const fromState = this.rotationState;
     const toState = (fromState + direction + 4) % 4;
@@ -295,7 +308,7 @@ class Piece {
       ? [[0, 0]]
       : kickTable[`${fromState}>${toState}`];
     const kick = kickTests.find(([dx, dy]) => (
-      board.isValid(this, this.x + dx, this.y + dy, rotated)
+      board.isValid(this.x + dx, this.y + dy, rotated)
     ));
     if (!kick) return false;
 
@@ -316,7 +329,7 @@ class Piece {
     return true;
   }
 
-  /** 围绕当前方块类型的 SRS 旋转中心计算单个格子的旋转后坐标。 */
+  /** 围绕当前方块类型的标准旋转中心计算单个格子的旋转后坐标。 */
   rotateCell([x, y], direction) {
     const [pivotX, pivotY] = ROTATION_PIVOTS[this.type];
     const relativeX = x - pivotX;
@@ -361,7 +374,7 @@ class Piece {
 
   /**
    * 收集与当前形状相邻的合法格并随机选择警告位置。
-   * Directed growth 开启时只收集每个格子右侧的候选位置。
+   * 开启定向生长时，只收集每个格子右侧的候选位置。
    */
   chooseWarning() {
     const directions = directedGrowth
@@ -407,6 +420,7 @@ class Piece {
 
 /** 在棋盘坐标上绘制一个具有统一描边的方格。 */
 function drawCell(col, row, cellColor) {
+  if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return;
   fill(cellColor);
   stroke(50);
   strokeWeight(1);
@@ -456,31 +470,38 @@ function takeNextPiece() {
 
 /**
  * 锁定当前方块、结算消行和奖励，然后生成下一方块。
- * 同时重置本方块专属的下落、锁定和 Hold 状态，并检查游戏结束。
+   * 同时重置本方块专属的下落、锁定和暂存状态，并检查游戏结束。
  */
 function lockAndSpawn() {
-  board.lock(currentPiece);
+  const toppedOut = board.lock(currentPiece);
   const lines = board.clearLines();
-  score += lines * lines * 100;
+  const lineClearScore = lines * lines * 100;
+  score += lineClearScore;
+  if (lines > 0) showLineClearNotice(lines, lineClearScore);
   freezeItems += lines;
   if (lines > 0) updateFreezeButton();
   piecesLocked += 1;
   if (!hardMode && piecesLocked % PIECES_PER_SPEED_LEVEL === 0) {
     speedUpNoticeFrames = SPEED_UP_NOTICE_FRAMES;
   }
-  currentPiece = takeNextPiece();
-  canHold = true;
   fallElapsedMs = 0;
   lockElapsedMs = 0;
   lockDelayResetCount = 0;
-  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y)) endGame();
+  if (toppedOut) {
+    endGame();
+    return;
+  }
+
+  currentPiece = takeNextPiece();
+  canHold = true;
+  if (!board.isValid(currentPiece.x, currentPiece.y, currentPiece.shape)) endGame();
   if (hardMode && !hardOperationInProgress && hardOperationCount % 4 !== 0
       && !gameOver && !isGrowthFrozen()) currentPiece.chooseWarning();
 }
 
 /**
  * 保存或交换当前方块；每个活动方块只能成功使用一次。
- * 交换后的形状会重新居中，若无法安全出生则回滚队列并返回 false。
+   * 交换后的形状会重新居中，若无法安全出生则回滚队列并返回失败结果。
  */
 function holdCurrentPiece() {
   if (gameOver || !canHold) return false;
@@ -497,10 +518,9 @@ function holdCurrentPiece() {
     incomingPiece = restorePiece(heldPiece);
   }
 
-  // A grown or rotated held structure can have negative offsets or be much
-  // wider than its original tetromino. Only commit the swap after a safe,
-  // centered spawn position has been found.
-  if (!board.isValid(incomingPiece, incomingPiece.x, incomingPiece.y)) {
+  // 生长或旋转后的暂存形状可能含有负偏移，也可能远宽于原始四格方块。
+  // 只有找到安全且居中的出生位置后，才真正提交本次交换。
+  if (!board.isValid(incomingPiece.x, incomingPiece.y, incomingPiece.shape)) {
     if (queueBeforeHold) nextQueue = queueBeforeHold;
     if (generationHistoryBeforeHold) pieceGenerationHistory = generationHistoryBeforeHold;
     return false;
@@ -515,7 +535,7 @@ function holdCurrentPiece() {
   return true;
 }
 
-/** 创建 Hold 所需的纯数据快照，避免保存活动方块的计时和警告状态。 */
+/** 创建暂存功能所需的纯数据快照，避免保存活动方块的计时和警告状态。 */
 function snapshotPiece(piece) {
   return {
     type: piece.type,
@@ -524,7 +544,7 @@ function snapshotPiece(piece) {
   };
 }
 
-/** 从 Hold 快照重建独立 Piece 实例，并重新计算出生位置。 */
+/** 从暂存快照重建独立方块实例，并重新计算出生位置。 */
 function restorePiece(savedPiece) {
   const piece = new Piece(savedPiece.type);
   piece.shape = savedPiece.shape.map(([x, y]) => [x, y]);
@@ -564,6 +584,18 @@ function getGrowthInterval() {
   return Math.max(MIN_GROWTH_INTERVAL, 330 - growthSpeed * 24 - progressReduction);
 }
 
+/**
+ * 创建一次消行得分提示。
+ * 提示保存本次行数、得分和剩余帧数，由界面绘制函数负责上浮淡出。
+ */
+function showLineClearNotice(lines, points) {
+  lineClearNotice = {
+    lines,
+    points,
+    framesRemaining: LINE_CLEAR_NOTICE_FRAMES,
+  };
+}
+
 /** 清空所有单局状态并创建全新棋盘，同时保留当前普通/困难模式选择。 */
 function restartGame() {
   board = new Board();
@@ -574,6 +606,7 @@ function restartGame() {
   score = 0;
   piecesLocked = 0;
   speedUpNoticeFrames = 0;
+  lineClearNotice = null;
   gameOver = false;
   gamePaused = false;
   fallElapsedMs = 0;
@@ -583,23 +616,26 @@ function restartGame() {
   resetInputTimers();
   hardOperationCount = 0;
   freezeItems = 0;
-  freezeFramesRemaining = 0;
+  freezeRemainingMs = 0;
   fillNextQueue();
   currentPiece = takeNextPiece();
-  updateModeButton();
-  updateFreezeButton();
-  updatePauseButton();
+  updateControlStates();
 }
 
 /** 标记游戏结束并同步所有会受结束状态影响的按钮。 */
 function endGame() {
   gameOver = true;
+  updateControlStates();
+}
+
+/** 集中刷新模式、冻结和暂停按钮，避免状态变化时遗漏其中某个控件。 */
+function updateControlStates() {
   updateModeButton();
   updateFreezeButton();
   updatePauseButton();
 }
 
-/** 缓存页面控件节点，避免在每一帧反复查询 DOM。 */
+/** 缓存页面控件节点，避免在每一帧反复查询页面结构。 */
 function cacheControls() {
   modeButton = document.querySelector('[data-action="mode"]');
   speedSlider = document.querySelector('#growth-speed');
@@ -661,6 +697,7 @@ function bindGrowthControls() {
   directedGrowth = directedGrowthCheckbox.checked;
   directedGrowthCheckbox.addEventListener('change', () => {
     directedGrowth = directedGrowthCheckbox.checked;
+    if (!currentPiece) return;
     const hadWarning = Boolean(currentPiece?.warning);
     currentPiece.warning = null;
     if (hadWarning || (hardMode && hardOperationCount % 4 !== 0)) {
@@ -675,30 +712,41 @@ function handleModeRequest() {
   restartGame();
 }
 
+/** 切换暂停状态并同步输入计时器和相关按钮；未开始或已结束时拒绝操作。 */
 function togglePause() {
   if (!gameStarted || gameOver) return false;
   gamePaused = !gamePaused;
   resetInputTimers();
-  updateModeButton();
-  updateFreezeButton();
-  updatePauseButton();
+  updateControlStates();
   return true;
 }
 
+/** 根据当前暂停和结束状态更新暂停按钮的文字及可用性。 */
 function updatePauseButton() {
   if (!pauseButton) return;
   pauseButton.textContent = gamePaused ? 'RESUME' : 'PAUSE';
   pauseButton.disabled = gameOver;
 }
 
+/** 返回冻结道具是否仍有剩余时间。 */
 function isGrowthFrozen() {
-  return freezeFramesRemaining > 0;
+  return freezeRemainingMs > 0;
 }
 
+/** 按真实经过时间减少冻结剩余时长，并及时刷新按钮显示。 */
+function updateFreezeTimer(elapsedMs) {
+  freezeRemainingMs = Math.max(0, freezeRemainingMs - Math.max(0, elapsedMs));
+  updateFreezeButton();
+}
+
+/**
+ * 消耗一个冻结道具，清除当前警告并暂停所有模式的生长。
+ * 困难模式操作阶段会回到四步周期起点，避免恢复时立即生长。
+ */
 function useFreezeItem() {
   if (gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen()) return false;
   freezeItems -= 1;
-  freezeFramesRemaining = FREEZE_DURATION_FRAMES;
+  freezeRemainingMs = FREEZE_DURATION_MS;
   currentPiece.warning = null;
   currentPiece.growthCounter = 0;
   hardOperationCount -= hardOperationCount % 4;
@@ -706,16 +754,22 @@ function useFreezeItem() {
   return true;
 }
 
+/** 显示冻结道具数量或剩余时间，并根据游戏状态决定按钮是否可用。 */
 function updateFreezeButton() {
   if (!freezeButton) return;
   if (isGrowthFrozen()) {
-    freezeButton.textContent = `FROZEN ${(freezeFramesRemaining / 60).toFixed(1)}s`;
+    freezeButton.textContent = `FROZEN ${(freezeRemainingMs / 1000).toFixed(1)}s`;
   } else {
     freezeButton.textContent = `FREEZE ×${freezeItems}`;
   }
   freezeButton.disabled = gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen();
 }
 
+/**
+ * 统一执行玩家操作并维护困难模式的四步生长周期。
+ * 第四次有效操作先提交生长；失败操作会回滚生长且不增加计数。
+ * 若操作生成了新方块，会根据操作阶段为新方块恢复正确的警告状态。
+ */
 function performOperation(action) {
   if (gameOver || gamePaused) return false;
 
@@ -730,16 +784,23 @@ function performOperation(action) {
     growthCounter: currentPiece.growthCounter,
   } : null;
 
-  // In hard mode, the first input previews a cell and the fourth grows it.
-  // Growth happens before carrying out input four so Hold and hard drop
-  // cannot discard the warned cell.
+  // 困难模式下，第一次有效操作显示警告格，第四次有效操作使其生长。
+  // 生长发生在第四次操作之前，防止暂存或硬降丢弃已经提示的生长格。
   if (hardMode && (hardOperationCount + 1) % 4 === 0) {
     currentPiece.commitWarningGrowth();
   }
 
   hardOperationInProgress = hardMode;
-  const succeeded = action() !== false;
-  hardOperationInProgress = false;
+  let succeeded;
+  let actionError = null;
+  try {
+    succeeded = action() !== false;
+  } catch (error) {
+    succeeded = false;
+    actionError = error;
+  } finally {
+    hardOperationInProgress = false;
+  }
 
   if (!succeeded) {
     if (growthBefore && currentPiece === pieceBefore) {
@@ -747,6 +808,7 @@ function performOperation(action) {
       currentPiece.warning = growthBefore.warning;
       currentPiece.growthCounter = growthBefore.growthCounter;
     }
+    if (actionError) throw actionError;
     return false;
   }
   if (!hardMode || gameOver) return true;
@@ -760,13 +822,41 @@ function performOperation(action) {
   return true;
 }
 
+/** 方块落地后移动或旋转时重置锁定计时，但每个方块最多允许 15 次。 */
 function resetLockDelayAfterAdjustment(piece) {
-  const isGrounded = !board.isValid(piece, piece.x, piece.y + 1);
+  const isGrounded = !board.isValid(piece.x, piece.y + 1, piece.shape);
   if (!isGrounded || lockDelayResetCount >= MAX_LOCK_DELAY_RESETS) return;
   lockElapsedMs = 0;
   lockDelayResetCount += 1;
 }
 
+/**
+ * 将键盘和触屏动作统一映射到同一套游戏函数。
+ * 未知动作返回失败，防止错误的页面属性触发意外行为。
+ */
+function executeGameAction(actionName) {
+  switch (actionName) {
+    case 'mode':
+      handleModeRequest();
+      return true;
+    case 'restart':
+      restartGame();
+      return true;
+    case 'pause': return togglePause();
+    case 'freeze': return useFreezeItem();
+    case 'left': return performOperation(() => currentPiece.move(-1, 0));
+    case 'right': return performOperation(() => currentPiece.move(1, 0));
+    case 'down': return performOperation(() => currentPiece.move(0, 1));
+    case 'rotate': return performOperation(() => currentPiece.rotate());
+    case 'rotate-ccw': return performOperation(() => currentPiece.rotate(-1));
+    case 'rotate-180': return performOperation(() => currentPiece.rotate(2));
+    case 'drop': return performOperation(hardDrop);
+    case 'hold': return performOperation(holdCurrentPiece);
+    default: return false;
+  }
+}
+
+/** 绘制暂存、预览、分数、模式、冻结、升级提示及暂停/结束遮罩。 */
 function drawInterface() {
   drawPanelTitle('Hold:', 20, 55);
   if (heldPiece) drawMiniShape(heldPiece.shape, COLORS[heldPiece.type], 20, 75, 15);
@@ -776,7 +866,7 @@ function drawInterface() {
   noStroke();
   fill(isGrowthFrozen() ? color(80, 190, 255) : 180);
   textSize(11);
-  text(isGrowthFrozen() ? `Frozen ${(freezeFramesRemaining / 60).toFixed(1)}s` : `Freeze ×${freezeItems}`, 20, 205);
+  text(isGrowthFrozen() ? `Frozen ${(freezeRemainingMs / 1000).toFixed(1)}s` : `Freeze ×${freezeItems}`, 20, 205);
 
   drawPanelTitle('Next:', 405, 55);
   nextQueue.forEach((type, index) => {
@@ -792,6 +882,8 @@ function drawInterface() {
   textSize(14);
   text(`Growth Lv: ${getGrowthLevel()}`, 385, 30);
   text(hardMode ? `HARD ${hardOperationCount % 4 + 1}/4` : 'NORMAL', 205, 30);
+
+  drawLineClearNotice();
 
   if (speedUpNoticeFrames > 0) {
     const pulse = 140 + 115 * Math.abs(Math.sin(frameCount * 0.2));
@@ -829,15 +921,42 @@ function drawInterface() {
   }
 }
 
+/**
+ * 在棋盘左侧绘制消行结果，并根据剩余时间向上移动及淡出。
+ * 四行消除显示四消名称，其余情况分别显示单消、双消或三消名称。
+ */
+function drawLineClearNotice() {
+  if (!lineClearNotice || lineClearNotice.framesRemaining <= 0) return;
+
+  const labels = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
+  const progress = 1 - lineClearNotice.framesRemaining / LINE_CLEAR_NOTICE_FRAMES;
+  const alpha = 255 * Math.min(1, lineClearNotice.framesRemaining / 25);
+  const noticeY = 285 - progress * 24;
+
+  noStroke();
+  fill(255, 205, 70, alpha);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(12);
+  text(labels[lineClearNotice.lines] || `${lineClearNotice.lines} LINES`, BOARD_X / 2, noticeY);
+  textSize(16);
+  text(`+${lineClearNotice.points}`, BOARD_X / 2, noticeY + 19);
+  textStyle(NORMAL);
+  textAlign(LEFT, BASELINE);
+}
+
+/** 通过视口宽度和指针类型判断当前是否应展示触屏文案。 */
 function usesTouchControls() {
   if (typeof window === 'undefined') return false;
   return window.innerWidth <= 560 || window.matchMedia('(pointer: coarse)').matches;
 }
 
+/** 使用统一样式绘制暂存和预览面板标题。 */
 function drawPanelTitle(label, x, y) {
   noStroke(); fill(255); textStyle(NORMAL); textSize(20); textAlign(LEFT, BASELINE); text(label, x, y);
 }
 
+/** 将形状按自身最小坐标归一化后绘制为暂存或预览缩略图。 */
 function drawMiniShape(shape, shapeColor, x, y, size) {
   const minX = Math.min(...shape.map(([dx]) => dx));
   const minY = Math.min(...shape.map(([, dy]) => dy));
@@ -848,17 +967,32 @@ function drawMiniShape(shape, shapeColor, x, y, size) {
   });
 }
 
-function resetInputTimers() {
+/** 清空左右方向键的长按方向和重复计时。 */
+function resetHorizontalInputTimers() {
   heldHorizontalDirection = 0;
   horizontalHoldElapsedMs = 0;
   horizontalRepeatElapsedMs = 0;
+}
+
+/** 清空软降键的长按状态和重复计时。 */
+function resetSoftDropInputTimers() {
   softDropWasHeld = false;
   softDropHoldElapsedMs = 0;
   softDropRepeatElapsedMs = 0;
 }
 
+/** 同时清空所有长按输入计时，供暂停和重新开局使用。 */
+function resetInputTimers() {
+  resetHorizontalInputTimers();
+  resetSoftDropInputTimers();
+}
+
+/**
+ * 用真实毫秒累计自动下落和落地锁定延迟。
+ * 可继续下落时按固定间隔下降；已落地时累计到上限后锁定。
+ */
 function updateFalling(elapsedMs) {
-  if (!board.isValid(currentPiece, currentPiece.x, currentPiece.y + 1)) {
+  if (!board.isValid(currentPiece.x, currentPiece.y + 1, currentPiece.shape)) {
     fallElapsedMs = 0;
     lockElapsedMs += elapsedMs;
     if (lockElapsedMs >= LOCK_DELAY_MS) lockAndSpawn();
@@ -872,6 +1006,10 @@ function updateFalling(elapsedMs) {
   currentPiece.move(0, 1);
 }
 
+/**
+ * 实现左右移动和软降的延迟自动重复行为。
+ * 首次按键由键盘按下入口处理并计作一次操作；长按产生的重复移动不重复计数。
+ */
 function handleHeldKeys(elapsedMs) {
   const horizontalDirection = keyIsDown(LEFT_ARROW) === keyIsDown(RIGHT_ARROW)
     ? 0
@@ -921,6 +1059,7 @@ function handleHeldKeys(elapsedMs) {
   }
 }
 
+/** 绘图库的键盘按下入口：处理开始、模式、暂停、道具以及所有方块操作。 */
 function keyPressed(event) {
   if (event && event.repeat) return false;
 
@@ -930,53 +1069,41 @@ function keyPressed(event) {
   }
 
   if (key === 'p' || key === 'P') {
-    togglePause();
+    executeGameAction('pause');
     return false;
   }
   if (gamePaused) {
-    if (key === 'r' || key === 'R') restartGame();
+    if (key === 'r' || key === 'R') executeGameAction('restart');
     return false;
   }
 
-  if (key === 'h' || key === 'H') handleModeRequest();
-  else if (key === 'r' || key === 'R') restartGame();
-  else if (key === 'f' || key === 'F') useFreezeItem();
-  else if (keyCode === LEFT_ARROW) performOperation(() => currentPiece.move(-1, 0));
-  else if (keyCode === RIGHT_ARROW) performOperation(() => currentPiece.move(1, 0));
-  else if (keyCode === DOWN_ARROW) performOperation(() => currentPiece.move(0, 1));
-  else if (keyCode === UP_ARROW) performOperation(() => currentPiece.rotate());
-  else if (key === 'z' || key === 'Z') performOperation(() => currentPiece.rotate(-1));
-  else if (key === 'x' || key === 'X') performOperation(() => currentPiece.rotate(2));
-  else if (key === ' ') performOperation(() => hardDrop());
-  else if (key === 'c' || key === 'C') performOperation(() => holdCurrentPiece());
+  if (key === 'h' || key === 'H') executeGameAction('mode');
+  else if (key === 'r' || key === 'R') executeGameAction('restart');
+  else if (key === 'f' || key === 'F') executeGameAction('freeze');
+  else if (keyCode === LEFT_ARROW) executeGameAction('left');
+  else if (keyCode === RIGHT_ARROW) executeGameAction('right');
+  else if (keyCode === DOWN_ARROW) executeGameAction('down');
+  else if (keyCode === UP_ARROW) executeGameAction('rotate');
+  else if (key === 'z' || key === 'Z') executeGameAction('rotate-ccw');
+  else if (key === 'x' || key === 'X') executeGameAction('rotate-180');
+  else if (key === ' ') executeGameAction('drop');
+  else if (key === 'c' || key === 'C') executeGameAction('hold');
 
   if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW, UP_ARROW, 32].includes(keyCode)) return false;
 }
 
+/** 绘图库的键盘松开入口：结束方向键长按并清空重复计时。 */
 function keyReleased() {
-  if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW].includes(keyCode)) resetInputTimers();
+  if ([LEFT_ARROW, RIGHT_ARROW].includes(keyCode)) resetHorizontalInputTimers();
+  if (keyCode === DOWN_ARROW) resetSoftDropInputTimers();
 }
 
+/** 将所有带操作属性的触屏按钮映射到与键盘相同的游戏操作。 */
 function bindTouchControls() {
-  const touchActions = {
-    mode: handleModeRequest,
-    restart: restartGame,
-    pause: togglePause,
-    freeze: useFreezeItem,
-    left: () => performOperation(() => currentPiece.move(-1, 0)),
-    right: () => performOperation(() => currentPiece.move(1, 0)),
-    down: () => performOperation(() => currentPiece.move(0, 1)),
-    rotate: () => performOperation(() => currentPiece.rotate()),
-    'rotate-ccw': () => performOperation(() => currentPiece.rotate(-1)),
-    'rotate-180': () => performOperation(() => currentPiece.rotate(2)),
-    drop: () => performOperation(hardDrop),
-    hold: () => performOperation(holdCurrentPiece),
-  };
-
   document.querySelectorAll('[data-action]').forEach((button) => {
     button.addEventListener('pointerdown', (event) => {
       event.preventDefault();
-      touchActions[button.dataset.action]?.();
+      executeGameAction(button.dataset.action);
     });
   });
 }

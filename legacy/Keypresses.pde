@@ -1,4 +1,4 @@
-//Temporary method for this lab only
+// 仅供早期实验版本使用的临时键盘处理方法
 
 void keyPressed() {
   if (key == ' ') {
