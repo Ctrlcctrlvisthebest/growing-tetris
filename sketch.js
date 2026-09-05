@@ -19,6 +19,35 @@ const MIN_GROWTH_INTERVAL = 60;
 const SPEED_UP_NOTICE_FRAMES = 90;
 const LINE_CLEAR_NOTICE_FRAMES = 90;
 const PIECE_REPEAT_WEIGHT_BY_AGE = [0, 0.25, 0.5, 0.75];
+const KEY_BINDINGS_STORAGE_KEY = 'growing-tetris-key-bindings-v1';
+const DEFAULT_KEY_BINDINGS = Object.freeze({
+  left: 'ArrowLeft',
+  right: 'ArrowRight',
+  down: 'ArrowDown',
+  rotate: 'ArrowUp',
+  'rotate-ccw': 'KeyZ',
+  'rotate-180': 'KeyX',
+  drop: 'Space',
+  hold: 'KeyC',
+  freeze: 'KeyF',
+  pause: 'KeyP',
+  mode: 'KeyH',
+  restart: 'KeyR',
+});
+const KEY_BINDING_ACTIONS = Object.freeze([
+  ['left', 'Move left'],
+  ['right', 'Move right'],
+  ['down', 'Soft drop'],
+  ['rotate', 'Rotate clockwise'],
+  ['rotate-ccw', 'Rotate counterclockwise'],
+  ['rotate-180', 'Rotate 180°'],
+  ['drop', 'Hard drop / start'],
+  ['hold', 'Hold / swap'],
+  ['freeze', 'Use Freeze'],
+  ['pause', 'Pause / resume'],
+  ['mode', 'Toggle hard mode'],
+  ['restart', 'Restart'],
+]);
 
 const SHAPES = {
   I: [[0, 1], [1, 1], [2, 1], [3, 1]],
@@ -100,6 +129,16 @@ let directedGrowthCheckbox;
 let freezeButton;
 let pauseButton;
 let startScreen;
+let keybindingsOpenButtons = [];
+let keybindingsPanel;
+let keybindingsCloseButton;
+let keybindingsList;
+let keyBindings = { ...DEFAULT_KEY_BINDINGS };
+let bindingCaptureAction = null;
+let controlsSuspended = false;
+let lastKeybindingsTrigger = null;
+let keybindingControlsBound = false;
+const heldActions = new Set();
 
 /** 初始化游戏画布、页面控件和第一局游戏；由绘图库在页面加载后调用一次。 */
 function setup() {
@@ -112,6 +151,7 @@ function setup() {
   restartGame();
   bindTouchControls();
   bindStartScreen();
+  setTimeout(initializeKeybindingControls, 0);
 }
 
 /**
@@ -126,7 +166,7 @@ function draw() {
     currentPiece.draw();
   }
 
-  if (gameStarted && !gameOver && !gamePaused) {
+  if (gameStarted && !gameOver && !gamePaused && !controlsSuspended) {
     const elapsedMs = Math.min(deltaTime, 100);
     handleHeldKeys(elapsedMs);
     if (isGrowthFrozen()) {
@@ -138,7 +178,7 @@ function draw() {
     if (speedUpNoticeFrames > 0) speedUpNoticeFrames -= 1;
   }
 
-  if (gameStarted && !gamePaused && lineClearNotice?.framesRemaining > 0) {
+  if (gameStarted && !gamePaused && !controlsSuspended && lineClearNotice?.framesRemaining > 0) {
     lineClearNotice.framesRemaining -= 1;
     if (lineClearNotice.framesRemaining <= 0) lineClearNotice = null;
   }
@@ -644,6 +684,222 @@ function cacheControls() {
   freezeButton = document.querySelector('[data-action="freeze"]');
   pauseButton = document.querySelector('[data-action="pause"]');
   startScreen = document.querySelector('#start-screen');
+  keybindingsOpenButtons = [...document.querySelectorAll('[data-open-keybindings]')];
+  keybindingsPanel = document.querySelector('#keybindings-panel');
+  keybindingsCloseButton = document.querySelector('#keybindings-close');
+  keybindingsList = document.querySelector('#keybindings-list');
+}
+
+/**
+ * 在页面节点完成解析后初始化改键功能。
+ * 一次性标记可防止重复调用时为同一按钮添加多个监听器。
+ */
+function initializeKeybindingControls() {
+  if (keybindingControlsBound) return;
+  cacheControls();
+  if (!keybindingsOpenButtons.length || !keybindingsPanel || !keybindingsList) return;
+  loadKeyBindings();
+  bindKeybindingControls();
+  keybindingControlsBound = true;
+}
+
+/** 判断一组键位是否包含全部动作、有效按键代码且没有冲突。 */
+function isValidKeyBindings(candidate) {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const codes = KEY_BINDING_ACTIONS.map(([action]) => candidate[action]);
+  return codes.every((code) => isBindableCode(code)) && new Set(codes).size === codes.length;
+}
+
+/** 判断键盘代码是否适合绑定，保留退出键和系统修饰键用于界面控制。 */
+function isBindableCode(code) {
+  if (typeof code !== 'string' || code.length === 0) return false;
+  return ![
+    'Escape', 'Unidentified', 'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight', 'CapsLock', 'F5', 'F12',
+  ].includes(code);
+}
+
+/** 从浏览器本地存储读取键位；数据缺失或损坏时安全回退到默认设置。 */
+function loadKeyBindings() {
+  keyBindings = { ...DEFAULT_KEY_BINDINGS };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(KEY_BINDINGS_STORAGE_KEY));
+    if (isValidKeyBindings(saved)) keyBindings = { ...saved };
+  } catch (_) {
+    keyBindings = { ...DEFAULT_KEY_BINDINGS };
+  }
+  updateDisplayedKeyLabels();
+}
+
+/** 将当前键位写入浏览器本地存储；存储不可用时保持当前会话设置。 */
+function saveKeyBindings() {
+  try {
+    window.localStorage.setItem(KEY_BINDINGS_STORAGE_KEY, JSON.stringify(keyBindings));
+  } catch (_) {
+    // 隐私模式或存储空间不可用不会影响本次游戏。
+  }
+}
+
+/** 将键盘事件代码转换成适合界面显示的短标签。 */
+function formatKeyCode(code) {
+  const labels = {
+    ArrowLeft: '←', ArrowRight: '→', ArrowDown: '↓', ArrowUp: '↑',
+    Space: 'SPACE', Enter: 'ENTER', Backspace: 'BACKSPACE', Delete: 'DELETE',
+  };
+  if (labels[code]) return labels[code];
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return `NUM ${code.slice(6)}`;
+  return code.replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase();
+}
+
+/** 返回指定按键代码当前绑定的动作；未绑定时返回空值。 */
+function getActionForCode(code) {
+  const entry = Object.entries(keyBindings).find(([, bindingCode]) => bindingCode === code);
+  return entry?.[0] ?? null;
+}
+
+/** 更新开始页、操作说明和其他静态位置中的键位标签。 */
+function updateDisplayedKeyLabels() {
+  document.querySelectorAll('[data-key-action]').forEach((element) => {
+    const code = keyBindings[element.dataset.keyAction];
+    if (code) element.textContent = formatKeyCode(code);
+  });
+}
+
+/** 根据当前键位生成设置列表，并标记正在等待输入的动作。 */
+function renderKeybindingsList() {
+  if (!keybindingsList) return;
+  keybindingsList.replaceChildren();
+  KEY_BINDING_ACTIONS.forEach(([action, labelText]) => {
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    label.htmlFor = `keybinding-${action}`;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = `keybinding-${action}`;
+    button.dataset.keybindingAction = action;
+    button.textContent = bindingCaptureAction === action ? 'PRESS A KEY…' : formatKeyCode(keyBindings[action]);
+    button.classList.toggle('is-listening', bindingCaptureAction === action);
+    keybindingsList.append(label, button);
+  });
+}
+
+/** 打开键位设置并暂停游戏状态更新，但不改变玩家原本的暂停状态。 */
+function openKeybindingsPanel(trigger = null) {
+  if (!keybindingsPanel) return;
+  lastKeybindingsTrigger = trigger ?? keybindingsOpenButtons[0] ?? null;
+  controlsSuspended = true;
+  bindingCaptureAction = null;
+  resetInputTimers();
+  keybindingsPanel.hidden = false;
+  renderKeybindingsList();
+  keybindingsCloseButton?.focus();
+}
+
+/** 关闭键位设置、取消等待输入并恢复游戏状态更新。 */
+function closeKeybindingsPanel() {
+  if (!keybindingsPanel) return;
+  bindingCaptureAction = null;
+  controlsSuspended = false;
+  keybindingsPanel.hidden = true;
+  resetInputTimers();
+  lastKeybindingsTrigger?.focus();
+}
+
+/** 进入指定动作的按键捕获状态。 */
+function beginKeyCapture(action) {
+  if (!Object.hasOwn(keyBindings, action)) return false;
+  bindingCaptureAction = action;
+  resetInputTimers();
+  renderKeybindingsList();
+  return true;
+}
+
+/**
+ * 应用捕获到的新按键；若按键已被其他动作使用，则交换两个动作的键位。
+ * 退出键只取消本次捕获，系统保留键会被忽略。
+ */
+function handleKeyCapture(event) {
+  if (!bindingCaptureAction || !event) return false;
+  if (event.code === 'Escape') {
+    bindingCaptureAction = null;
+    renderKeybindingsList();
+    return true;
+  }
+  if (!isBindableCode(event.code)) return true;
+
+  const targetAction = bindingCaptureAction;
+  const previousCode = keyBindings[targetAction];
+  const conflictingAction = getActionForCode(event.code);
+  if (conflictingAction && conflictingAction !== targetAction) {
+    keyBindings[conflictingAction] = previousCode;
+  }
+  keyBindings[targetAction] = event.code;
+  bindingCaptureAction = null;
+  saveKeyBindings();
+  updateDisplayedKeyLabels();
+  renderKeybindingsList();
+  return true;
+}
+
+/** 恢复所有默认键位并立即保存和刷新界面。 */
+function resetKeyBindings() {
+  keyBindings = { ...DEFAULT_KEY_BINDINGS };
+  bindingCaptureAction = null;
+  saveKeyBindings();
+  updateDisplayedKeyLabels();
+  renderKeybindingsList();
+}
+
+/** 在文档级别分派改键面板的指针操作，避免动态节点重绘后丢失监听。 */
+function handleKeybindingPointerDown(event) {
+  const target = event.target;
+  const openButton = target?.closest?.('[data-open-keybindings]');
+  if (openButton) {
+    event.preventDefault();
+    openKeybindingsPanel(openButton);
+    return;
+  }
+  if (target?.closest?.('#keybindings-close')) {
+    event.preventDefault();
+    closeKeybindingsPanel();
+    return;
+  }
+  if (target?.closest?.('#keybindings-reset')) {
+    event.preventDefault();
+    resetKeyBindings();
+    return;
+  }
+  const bindingButton = target?.closest?.('[data-keybinding-action]');
+  if (bindingButton) {
+    event.preventDefault();
+    beginKeyCapture(bindingButton.dataset.keybindingAction);
+    return;
+  }
+  if (target === keybindingsPanel) closeKeybindingsPanel();
+}
+
+/** 在事件捕获阶段接收改键输入，防止按键继续触发绘图库的游戏操作。 */
+function handleKeybindingKeyDown(event) {
+  if (bindingCaptureAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleKeyCapture(event);
+    return;
+  }
+  if (controlsSuspended && event.code === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeKeybindingsPanel();
+  }
+}
+
+/** 绑定文档级指针和键盘监听器，统一处理全部改键界面操作。 */
+function bindKeybindingControls() {
+  document.addEventListener('pointerdown', handleKeybindingPointerDown);
+  document.addEventListener('keydown', handleKeybindingKeyDown, true);
 }
 
 /** 响应首次开始操作，隐藏开始页并从零开始累计游戏计时。 */
@@ -664,6 +920,7 @@ function bindStartScreen() {
   if (!startScreen) return;
   startScreen.addEventListener('pointerdown', (event) => {
     if (!usesTouchControls()) return;
+    if (event.target.closest('button, input, label')) return;
     event.preventDefault();
     startGame();
   });
@@ -905,18 +1162,18 @@ function drawInterface() {
         text('RESTART: Play hard mode again', width / 2, BOARD_Y + 300);
         text('EXIT HARD MODE: Return to normal', width / 2, BOARD_Y + 330);
       } else {
-        text('R: Play hard mode again', width / 2, BOARD_Y + 300);
-        text('H: Exit hard mode', width / 2, BOARD_Y + 330);
+        text(`${formatKeyCode(keyBindings.restart)}: Play hard mode again`, width / 2, BOARD_Y + 300);
+        text(`${formatKeyCode(keyBindings.mode)}: Exit hard mode`, width / 2, BOARD_Y + 330);
       }
     } else {
-      text(usesTouchControls() ? 'Tap RESTART below' : 'Press R to restart', width / 2, BOARD_Y + 310);
+      text(usesTouchControls() ? 'Tap RESTART below' : `Press ${formatKeyCode(keyBindings.restart)} to restart`, width / 2, BOARD_Y + 310);
     }
     textAlign(LEFT, BASELINE);
   } else if (gamePaused) {
     noStroke(); fill(0, 215); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 110);
     textAlign(CENTER, CENTER); fill(255); textSize(28); text('PAUSED', width / 2, BOARD_Y + 270);
     textSize(13);
-    text(usesTouchControls() ? 'Tap RESUME below' : 'Press P to resume', width / 2, BOARD_Y + 315);
+    text(usesTouchControls() ? 'Tap RESUME below' : `Press ${formatKeyCode(keyBindings.pause)} to resume`, width / 2, BOARD_Y + 315);
     textAlign(LEFT, BASELINE);
   }
 }
@@ -928,7 +1185,7 @@ function drawInterface() {
 function drawLineClearNotice() {
   if (!lineClearNotice || lineClearNotice.framesRemaining <= 0) return;
 
-  const labels = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
+  const labels = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'QUAD'];
   const progress = 1 - lineClearNotice.framesRemaining / LINE_CLEAR_NOTICE_FRAMES;
   const alpha = 255 * Math.min(1, lineClearNotice.framesRemaining / 25);
   const noticeY = 285 - progress * 24;
@@ -985,6 +1242,7 @@ function resetSoftDropInputTimers() {
 function resetInputTimers() {
   resetHorizontalInputTimers();
   resetSoftDropInputTimers();
+  heldActions.clear();
 }
 
 /**
@@ -1011,9 +1269,11 @@ function updateFalling(elapsedMs) {
  * 首次按键由键盘按下入口处理并计作一次操作；长按产生的重复移动不重复计数。
  */
 function handleHeldKeys(elapsedMs) {
-  const horizontalDirection = keyIsDown(LEFT_ARROW) === keyIsDown(RIGHT_ARROW)
+  const leftHeld = heldActions.has('left');
+  const rightHeld = heldActions.has('right');
+  const horizontalDirection = leftHeld === rightHeld
     ? 0
-    : (keyIsDown(LEFT_ARROW) ? -1 : 1);
+    : (leftHeld ? -1 : 1);
 
   if (horizontalDirection !== heldHorizontalDirection) {
     heldHorizontalDirection = horizontalDirection;
@@ -1036,7 +1296,7 @@ function handleHeldKeys(elapsedMs) {
     }
   }
 
-  const softDropHeld = keyIsDown(DOWN_ARROW);
+  const softDropHeld = heldActions.has('down');
   if (softDropHeld !== softDropWasHeld) {
     softDropWasHeld = softDropHeld;
     softDropHoldElapsedMs = 0;
@@ -1061,41 +1321,43 @@ function handleHeldKeys(elapsedMs) {
 
 /** 绘图库的键盘按下入口：处理开始、模式、暂停、道具以及所有方块操作。 */
 function keyPressed(event) {
-  if (event && event.repeat) return false;
-
-  if (!gameStarted) {
-    if (key === ' ') startGame();
+  if (handleKeyCapture(event)) return false;
+  if (controlsSuspended) {
+    if (event?.code === 'Escape') closeKeybindingsPanel();
     return false;
   }
 
-  if (key === 'p' || key === 'P') {
+  const action = getActionForCode(event?.code);
+  if (!action) return undefined;
+  if (event?.repeat) return false;
+
+  if (!gameStarted) {
+    if (action === 'drop') startGame();
+    return false;
+  }
+
+  if (action === 'pause') {
     executeGameAction('pause');
     return false;
   }
   if (gamePaused) {
-    if (key === 'r' || key === 'R') executeGameAction('restart');
+    if (action === 'restart') executeGameAction('restart');
     return false;
   }
 
-  if (key === 'h' || key === 'H') executeGameAction('mode');
-  else if (key === 'r' || key === 'R') executeGameAction('restart');
-  else if (key === 'f' || key === 'F') executeGameAction('freeze');
-  else if (keyCode === LEFT_ARROW) executeGameAction('left');
-  else if (keyCode === RIGHT_ARROW) executeGameAction('right');
-  else if (keyCode === DOWN_ARROW) executeGameAction('down');
-  else if (keyCode === UP_ARROW) executeGameAction('rotate');
-  else if (key === 'z' || key === 'Z') executeGameAction('rotate-ccw');
-  else if (key === 'x' || key === 'X') executeGameAction('rotate-180');
-  else if (key === ' ') executeGameAction('drop');
-  else if (key === 'c' || key === 'C') executeGameAction('hold');
-
-  if ([LEFT_ARROW, RIGHT_ARROW, DOWN_ARROW, UP_ARROW, 32].includes(keyCode)) return false;
+  if (['left', 'right', 'down'].includes(action)) heldActions.add(action);
+  executeGameAction(action);
+  return false;
 }
 
 /** 绘图库的键盘松开入口：结束方向键长按并清空重复计时。 */
-function keyReleased() {
-  if ([LEFT_ARROW, RIGHT_ARROW].includes(keyCode)) resetHorizontalInputTimers();
-  if (keyCode === DOWN_ARROW) resetSoftDropInputTimers();
+function keyReleased(event) {
+  const action = getActionForCode(event?.code);
+  if (!action) return undefined;
+  heldActions.delete(action);
+  if (action === 'left' || action === 'right') resetHorizontalInputTimers();
+  if (action === 'down') resetSoftDropInputTimers();
+  return false;
 }
 
 /** 将所有带操作属性的触屏按钮映射到与键盘相同的游戏操作。 */

@@ -9,6 +9,7 @@ const source = fs.readFileSync(sourcePath, 'utf8');
 
 /** 创建带有最少绘图环境替身的隔离游戏运行环境。 */
 function createGameContext() {
+  const storage = new Map();
   const context = {
     assert,
     console,
@@ -16,7 +17,14 @@ function createGameContext() {
     random: (values) => (Array.isArray(values) ? values[0] : 0),
     color: () => ({ setAlpha() {} }),
     document: { querySelector: () => null, querySelectorAll: () => [] },
-    window: { innerWidth: 1000, matchMedia: () => ({ matches: false }) },
+    window: {
+      innerWidth: 1000,
+      matchMedia: () => ({ matches: false }),
+      localStorage: {
+        getItem: (key) => storage.get(key) ?? null,
+        setItem: (key, value) => storage.set(key, value),
+      },
+    },
     LEFT_ARROW: 37,
     RIGHT_ARROW: 39,
     DOWN_ARROW: 40,
@@ -130,11 +138,95 @@ test('长按移动不重复计数', () => {
 
     heldHorizontalDirection = -1;
     horizontalHoldElapsedMs = HORIZONTAL_HOLD_DELAY_MS - 10;
+    heldActions.add('left');
     const xBeforeRepeat = currentPiece.x;
     handleHeldKeys(100);
     assert.equal(currentPiece.x < xBeforeRepeat, true);
     assert.equal(hardOperationCount, 1);
-  `, { keyIsDown: (code) => code === 37 });
+  `);
+});
+
+// 验证自定义键位能够驱动游戏，松键后也会清除相应长按状态。
+test('自定义键位驱动操作', () => {
+  runGameAssertions(`
+    board = new Board();
+    currentPiece = new Piece('T');
+    gameStarted = true;
+    gameOver = false;
+    gamePaused = false;
+    hardMode = true;
+    freezeRemainingMs = 0;
+    keyBindings.left = 'KeyA';
+    const xBeforeMove = currentPiece.x;
+    assert.equal(keyPressed({ code: 'KeyA', repeat: false }), false);
+    assert.equal(currentPiece.x, xBeforeMove - 1);
+    assert.equal(hardOperationCount, 1);
+    assert.equal(heldActions.has('left'), true);
+    assert.equal(keyReleased({ code: 'KeyA' }), false);
+    assert.equal(heldActions.has('left'), false);
+  `);
+});
+
+// 验证键位冲突采用交换策略，并拒绝系统保留键。
+test('键位冲突交换和保留键保护', () => {
+  runGameAssertions(`
+    keyBindings = { ...DEFAULT_KEY_BINDINGS };
+    assert.equal(beginKeyCapture('left'), true);
+    assert.equal(handleKeyCapture({ code: 'ArrowRight' }), true);
+    assert.equal(keyBindings.left, 'ArrowRight');
+    assert.equal(keyBindings.right, 'ArrowLeft');
+    assert.equal(isValidKeyBindings(keyBindings), true);
+
+    assert.equal(beginKeyCapture('left'), true);
+    assert.equal(handleKeyCapture({ code: 'Escape' }), true);
+    assert.equal(keyBindings.left, 'ArrowRight');
+    assert.equal(isBindableCode('F5'), false);
+    assert.equal(isBindableCode('ControlLeft'), false);
+  `);
+});
+
+// 验证文档级事件入口可以打开面板并截获改键输入。
+test('改键面板事件委托', () => {
+  runGameAssertions(`
+    keybindingsPanel = { hidden: true };
+    keybindingsList = null;
+    keybindingsOpenButtons = [];
+    let pointerPrevented = false;
+    const trigger = { focus() {} };
+    handleKeybindingPointerDown({
+      target: { closest: (selector) => selector === '[data-open-keybindings]' ? trigger : null },
+      preventDefault: () => { pointerPrevented = true; },
+    });
+    assert.equal(pointerPrevented, true);
+    assert.equal(keybindingsPanel.hidden, false);
+    assert.equal(controlsSuspended, true);
+
+    bindingCaptureAction = 'left';
+    let keyPrevented = false;
+    let propagationStopped = false;
+    handleKeybindingKeyDown({
+      code: 'KeyA',
+      preventDefault: () => { keyPrevented = true; },
+      stopPropagation: () => { propagationStopped = true; },
+    });
+    assert.equal(keyPrevented, true);
+    assert.equal(propagationStopped, true);
+    assert.equal(keyBindings.left, 'KeyA');
+  `);
+});
+
+// 验证损坏的本地键位数据会安全恢复默认设置。
+test('损坏键位存储安全回退', () => {
+  runGameAssertions(`
+    window.localStorage.setItem(KEY_BINDINGS_STORAGE_KEY, '{bad json');
+    loadKeyBindings();
+    assert.deepEqual(keyBindings, { ...DEFAULT_KEY_BINDINGS });
+
+    const duplicated = { ...DEFAULT_KEY_BINDINGS, left: 'KeyA', right: 'KeyA' };
+    window.localStorage.setItem(KEY_BINDINGS_STORAGE_KEY, JSON.stringify(duplicated));
+    loadKeyBindings();
+    assert.deepEqual(keyBindings, { ...DEFAULT_KEY_BINDINGS });
+  `);
 });
 
 // 验证松开一种方向键不会清空另一种仍按住的输入计时。

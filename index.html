@@ -16,7 +16,7 @@
         <div class="start-card">
           <p class="start-kicker">A TETRIS GAME THAT NEVER STOPS CHANGING</p>
           <h1 id="start-title">GROWING<br />TETRIS</h1>
-          <p class="start-prompt desktop-start">PRESS SPACE TO START</p>
+          <p class="start-prompt desktop-start">PRESS <span data-key-action="drop">SPACE</span> TO START</p>
           <p class="start-prompt touch-start">TAP ANYWHERE TO START</p>
           <p id="start-description" class="start-description">
             Falling pieces grow while you play. A flashing cell shows where the next block will appear—move and rotate before it grows.
@@ -30,18 +30,20 @@
           </div>
 
           <div class="start-controls" aria-label="Keyboard controls">
-            <span><kbd>←</kbd><kbd>→</kbd> Move</span>
-            <span><kbd>↓</kbd> Soft drop</span>
-            <span><kbd>↑</kbd> Rotate</span>
-            <span><kbd>Z</kbd> CCW</span>
-            <span><kbd>X</kbd> 180°</span>
-            <span><kbd>SPACE</kbd> Drop</span>
-            <span><kbd>C</kbd> Hold</span>
-            <span><kbd>F</kbd> Freeze</span>
-            <span><kbd>P</kbd> Pause</span>
-            <span><kbd>H</kbd> Hard mode</span>
-            <span><kbd>R</kbd> Restart</span>
+            <span><kbd data-key-action="left">←</kbd><kbd data-key-action="right">→</kbd> Move</span>
+            <span><kbd data-key-action="down">↓</kbd> Soft drop</span>
+            <span><kbd data-key-action="rotate">↑</kbd> Rotate</span>
+            <span><kbd data-key-action="rotate-ccw">Z</kbd> CCW</span>
+            <span><kbd data-key-action="rotate-180">X</kbd> 180°</span>
+            <span><kbd data-key-action="drop">SPACE</kbd> Drop</span>
+            <span><kbd data-key-action="hold">C</kbd> Hold</span>
+            <span><kbd data-key-action="freeze">F</kbd> Freeze</span>
+            <span><kbd data-key-action="pause">P</kbd> Pause</span>
+            <span><kbd data-key-action="mode">H</kbd> Hard mode</span>
+            <span><kbd data-key-action="restart">R</kbd> Restart</span>
           </div>
+
+          <button class="start-keybindings" data-open-keybindings type="button">KEY SETTINGS</button>
 
         </div>
       </section>
@@ -75,22 +77,37 @@
         <button data-action="mode" aria-label="Enter or exit hard mode">START HARD MODE</button>
       </div>
       <div class="desktop-controls" aria-label="Keyboard controls">
-        <span><kbd>←</kbd><kbd>→</kbd> Move</span>
-        <span><kbd>↓</kbd> Soft drop</span>
-        <span><kbd>↑</kbd> Rotate CW</span>
-        <span><kbd>Z</kbd> Rotate CCW</span>
-        <span><kbd>X</kbd> Rotate 180°</span>
-        <span><kbd>SPACE</kbd> Hard drop</span>
-        <span><kbd>C</kbd> Hold / swap</span>
-        <span><kbd>F</kbd> Freeze growth</span>
-        <span><kbd>P</kbd> Pause / resume</span>
-        <span><kbd>H</kbd> Hard mode</span>
-        <span><kbd>R</kbd> Restart</span>
+        <span><kbd data-key-action="left">←</kbd><kbd data-key-action="right">→</kbd> Move</span>
+        <span><kbd data-key-action="down">↓</kbd> Soft drop</span>
+        <span><kbd data-key-action="rotate">↑</kbd> Rotate CW</span>
+        <span><kbd data-key-action="rotate-ccw">Z</kbd> Rotate CCW</span>
+        <span><kbd data-key-action="rotate-180">X</kbd> Rotate 180°</span>
+        <span><kbd data-key-action="drop">SPACE</kbd> Hard drop</span>
+        <span><kbd data-key-action="hold">C</kbd> Hold / swap</span>
+        <span><kbd data-key-action="freeze">F</kbd> Freeze growth</span>
+        <span><kbd data-key-action="pause">P</kbd> Pause / resume</span>
+        <span><kbd data-key-action="mode">H</kbd> Hard mode</span>
+        <span><kbd data-key-action="restart">R</kbd> Restart</span>
       </div>
       <section class="game-guide" aria-label="Growth and freeze guide">
         <p><strong>LANDING GUIDE</strong> The thick gray outline marks the current piece's landing position.</p>
         <p><strong>GROWTH SPEED</strong> Drag the slider left or right. It works in Normal mode only.</p>
-        <p><strong>FREEZE</strong> Clear each line to earn 1 item. Press <kbd>F</kbd> or tap FREEZE to stop growth for 8 seconds.</p>
+        <p><strong>FREEZE</strong> Clear each line to earn 1 item. Press <kbd data-key-action="freeze">F</kbd> or tap FREEZE to stop growth for 8 seconds.</p>
+      </section>
+
+      <button class="keybindings-open" data-open-keybindings type="button" aria-haspopup="dialog" aria-controls="keybindings-panel">
+        KEY SETTINGS
+      </button>
+      <section id="keybindings-panel" class="keybindings-panel" role="dialog" aria-modal="true" aria-labelledby="keybindings-title" hidden>
+        <div class="keybindings-card">
+          <div class="keybindings-header">
+            <h2 id="keybindings-title">KEY SETTINGS</h2>
+            <button id="keybindings-close" type="button" aria-label="Close key settings">×</button>
+          </div>
+          <p>Choose an action, then press a key. Conflicting bindings will be swapped.</p>
+          <div id="keybindings-list" class="keybindings-list"></div>
+          <button id="keybindings-reset" class="keybindings-reset" type="button">RESET DEFAULTS</button>
+        </div>
       </section>
     </main>
   </body>
