@@ -325,6 +325,31 @@ body {
   cursor: pointer;
 }
 
+.music-toggle {
+  position: fixed;
+  z-index: 21;
+  top: max(10px, env(safe-area-inset-top));
+  right: calc(max(10px, env(safe-area-inset-right)) + 102px);
+  min-height: 26px;
+  padding: 7px 9px;
+  border: 1px solid #666;
+  border-radius: 3px;
+  background: #171717;
+  color: #ddd;
+  font: bold 10px/1 monospace;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.music-toggle:hover,
+.music-toggle:focus-visible {
+  border-color: #999;
+  background: #222;
+  color: #fff;
+}
+
+.music-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
 .start-keybindings {
   margin-top: 16px;
   padding: 7px 10px;
@@ -497,6 +522,12 @@ body {
   .keybindings-open {
     top: auto;
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
+  }
+  .music-toggle {
+    top: auto;
+    right: calc(max(10px, env(safe-area-inset-right)) + 102px);
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
+    min-height: 26px;
   }
   .feedback-button { min-height: 36px; padding: 8px 10px; }
 }

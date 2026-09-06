@@ -20,6 +20,8 @@ const SPEED_UP_NOTICE_FRAMES = 90;
 const LINE_CLEAR_NOTICE_FRAMES = 90;
 const PIECE_REPEAT_WEIGHT_BY_AGE = [0, 0.25, 0.5, 0.75];
 const KEY_BINDINGS_STORAGE_KEY = 'growing-tetris-key-bindings-v1';
+const MUSIC_ENABLED_STORAGE_KEY = 'growing-tetris-music-enabled-v1';
+const MUSIC_VOLUME = 0.32;
 const DEFAULT_KEY_BINDINGS = Object.freeze({
   left: 'ArrowLeft',
   right: 'ArrowRight',
@@ -133,11 +135,15 @@ let keybindingsOpenButtons = [];
 let keybindingsPanel;
 let keybindingsCloseButton;
 let keybindingsList;
+let backgroundMusic;
+let musicToggleButton;
 let keyBindings = { ...DEFAULT_KEY_BINDINGS };
 let bindingCaptureAction = null;
 let controlsSuspended = false;
 let lastKeybindingsTrigger = null;
 let keybindingControlsBound = false;
+let musicEnabled = true;
+let musicControlsBound = false;
 const heldActions = new Set();
 
 /** 初始化游戏画布、页面控件和第一局游戏；由绘图库在页面加载后调用一次。 */
@@ -147,6 +153,7 @@ function setup() {
   frameRate(60);
   textFont('monospace');
   cacheControls();
+  initializeMusicControls();
   bindGrowthControls();
   restartGame();
   bindTouchControls();
@@ -660,12 +667,14 @@ function restartGame() {
   fillNextQueue();
   currentPiece = takeNextPiece();
   updateControlStates();
+  syncBackgroundMusic();
 }
 
 /** 标记游戏结束并同步所有会受结束状态影响的按钮。 */
 function endGame() {
   gameOver = true;
   updateControlStates();
+  syncBackgroundMusic();
 }
 
 /** 集中刷新模式、冻结和暂停按钮，避免状态变化时遗漏其中某个控件。 */
@@ -688,6 +697,80 @@ function cacheControls() {
   keybindingsPanel = document.querySelector('#keybindings-panel');
   keybindingsCloseButton = document.querySelector('#keybindings-close');
   keybindingsList = document.querySelector('#keybindings-list');
+  backgroundMusic = document.querySelector('#background-music');
+  musicToggleButton = document.querySelector('#music-toggle');
+}
+
+/** 从浏览器本地存储读取音乐开关；存储不可用时默认开启。 */
+function loadMusicPreference() {
+  musicEnabled = true;
+  try {
+    musicEnabled = window.localStorage.getItem(MUSIC_ENABLED_STORAGE_KEY) !== 'false';
+  } catch (_) {
+    musicEnabled = true;
+  }
+}
+
+/** 保存音乐开关；隐私模式或存储失败不会影响当前会话。 */
+function saveMusicPreference() {
+  try {
+    window.localStorage.setItem(MUSIC_ENABLED_STORAGE_KEY, String(musicEnabled));
+  } catch (_) {
+    // 本地存储不可用时只保留当前页面中的设置。
+  }
+}
+
+/** 根据音乐开关更新按钮文字和无障碍按下状态。 */
+function updateMusicButton() {
+  if (!musicToggleButton) return;
+  musicToggleButton.textContent = musicEnabled ? '♪ MUSIC ON' : '♪ MUSIC OFF';
+  musicToggleButton.setAttribute('aria-pressed', String(musicEnabled));
+}
+
+/**
+ * 让背景音乐与开始、暂停、游戏结束、设置面板和页面可见状态保持一致。
+ * 播放失败通常表示浏览器仍在等待用户操作，此时静默等待下一次操作重试。
+ */
+function syncBackgroundMusic() {
+  if (!backgroundMusic) return;
+  const shouldPlay = musicEnabled
+    && gameStarted
+    && !gamePaused
+    && !gameOver
+    && !controlsSuspended
+    && !document.hidden;
+  if (!shouldPlay) {
+    backgroundMusic.pause();
+    return;
+  }
+  const playRequest = backgroundMusic.play();
+  if (playRequest?.catch) playRequest.catch(() => {});
+}
+
+/** 切换音乐设置、保存偏好，并立即同步实际播放状态。 */
+function toggleBackgroundMusic() {
+  musicEnabled = !musicEnabled;
+  saveMusicPreference();
+  updateMusicButton();
+  syncBackgroundMusic();
+}
+
+/** 页面切到后台时暂停音乐，重新可见时在符合游戏状态的情况下恢复。 */
+function handleMusicVisibilityChange() {
+  syncBackgroundMusic();
+}
+
+/** 初始化音乐音量、循环播放、持久化开关和页面事件；重复调用不会重复绑定。 */
+function initializeMusicControls() {
+  if (musicControlsBound || !backgroundMusic || !musicToggleButton) return;
+  loadMusicPreference();
+  backgroundMusic.volume = MUSIC_VOLUME;
+  backgroundMusic.loop = true;
+  musicToggleButton.addEventListener('click', toggleBackgroundMusic);
+  document.addEventListener('visibilitychange', handleMusicVisibilityChange);
+  musicControlsBound = true;
+  updateMusicButton();
+  syncBackgroundMusic();
 }
 
 /**
@@ -796,6 +879,7 @@ function openKeybindingsPanel(trigger = null) {
   keybindingsPanel.hidden = false;
   renderKeybindingsList();
   keybindingsCloseButton?.focus();
+  syncBackgroundMusic();
 }
 
 /** 关闭键位设置、取消等待输入并恢复游戏状态更新。 */
@@ -806,6 +890,7 @@ function closeKeybindingsPanel() {
   keybindingsPanel.hidden = true;
   resetInputTimers();
   lastKeybindingsTrigger?.focus();
+  syncBackgroundMusic();
 }
 
 /** 进入指定动作的按键捕获状态。 */
@@ -913,6 +998,7 @@ function startGame() {
     startScreen.classList.add('is-hidden');
     startScreen.setAttribute('aria-hidden', 'true');
   }
+  syncBackgroundMusic();
 }
 
 /** 为触屏设备绑定点击开始；桌面端继续使用空格键开始。 */
@@ -975,6 +1061,7 @@ function togglePause() {
   gamePaused = !gamePaused;
   resetInputTimers();
   updateControlStates();
+  syncBackgroundMusic();
   return true;
 }
 

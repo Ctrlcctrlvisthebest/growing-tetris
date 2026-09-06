@@ -229,6 +229,44 @@ test('损坏键位存储安全回退', () => {
   `);
 });
 
+// 验证音乐只在允许播放的游戏状态中播放，并能通过按钮立即静音。
+test('背景音乐跟随游戏和开关状态', () => {
+  runGameAssertions(`
+    let playCount = 0;
+    let pauseCount = 0;
+    backgroundMusic = {
+      play: () => { playCount += 1; return Promise.resolve(); },
+      pause: () => { pauseCount += 1; },
+    };
+    musicToggleButton = {
+      textContent: '',
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; },
+    };
+    musicEnabled = true;
+    gameStarted = true;
+    gamePaused = false;
+    gameOver = false;
+    controlsSuspended = false;
+
+    syncBackgroundMusic();
+    assert.equal(playCount, 1);
+    assert.equal(pauseCount, 0);
+
+    gamePaused = true;
+    syncBackgroundMusic();
+    assert.equal(pauseCount, 1);
+
+    gamePaused = false;
+    toggleBackgroundMusic();
+    assert.equal(musicEnabled, false);
+    assert.equal(musicToggleButton.textContent, '♪ MUSIC OFF');
+    assert.equal(musicToggleButton.attributes['aria-pressed'], 'false');
+    assert.equal(pauseCount, 2);
+    assert.equal(window.localStorage.getItem(MUSIC_ENABLED_STORAGE_KEY), 'false');
+  `);
+});
+
 // 验证松开一种方向键不会清空另一种仍按住的输入计时。
 test('输入计时器互不干扰', () => {
   runGameAssertions(`
