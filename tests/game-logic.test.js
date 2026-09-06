@@ -267,6 +267,92 @@ test('背景音乐跟随游戏和开关状态', () => {
   `);
 });
 
+// 验证开场曲固定、普通候选池完整，并且高速曲只在允许的速度状态出现。
+test('背景音乐按速度选择候选曲目', () => {
+  runGameAssertions(`
+    hardMode = false;
+    growthSpeed = 3;
+    piecesLocked = 0;
+    assert.equal(
+      JSON.stringify(getEligibleMusicTrackIds()),
+      JSON.stringify([OPENING_MUSIC_TRACK_ID, 'syncopated-a-minor', 'heavy-break-d-minor']),
+    );
+    assert.equal(allowsHighGrowthMusic(), false);
+
+    growthSpeed = 10;
+    assert.equal(allowsHighGrowthMusic(), true);
+    assert.equal(getEligibleMusicTrackIds().includes(HIGH_GROWTH_MUSIC_TRACK_ID), true);
+
+    growthSpeed = 3;
+    hardMode = true;
+    assert.equal(allowsHighGrowthMusic(), true);
+  `);
+});
+
+// 验证每次新开局都重置为开场曲，曲目结束后才进入非开场候选轮换。
+test('背景音乐固定开场并在结束后轮换', () => {
+  runGameAssertions(`
+    let playCount = 0;
+    backgroundMusic = {
+      src: MUSIC_TRACKS['heavy-break-d-minor'],
+      currentTime: 12,
+      getAttribute: () => MUSIC_TRACKS['heavy-break-d-minor'],
+      pause() {},
+      load() {},
+      play: () => { playCount += 1; return Promise.resolve(); },
+    };
+    musicEnabled = true;
+    gameStarted = true;
+    gamePaused = false;
+    gameOver = false;
+    controlsSuspended = false;
+    hardMode = false;
+    growthSpeed = 3;
+    piecesLocked = 0;
+    currentMusicTrackId = 'heavy-break-d-minor';
+
+    resetBackgroundMusicForGame();
+    assert.equal(currentMusicTrackId, OPENING_MUSIC_TRACK_ID);
+    assert.equal(backgroundMusic.src, MUSIC_TRACKS[OPENING_MUSIC_TRACK_ID]);
+    assert.equal(backgroundMusic.currentTime, 0);
+    assert.equal(playCount, 1);
+
+    handleBackgroundMusicEnded();
+    assert.equal(currentMusicTrackId, 'syncopated-a-minor');
+    assert.equal(backgroundMusic.src, MUSIC_TRACKS['syncopated-a-minor']);
+    assert.equal(playCount, 2);
+  `);
+});
+
+// 验证降低生长速度会立即停止不再符合条件的高速曲，并切回普通候选池。
+test('降低生长速度会退出高速曲', () => {
+  runGameAssertions(`
+    let playCount = 0;
+    backgroundMusic = {
+      src: MUSIC_TRACKS[HIGH_GROWTH_MUSIC_TRACK_ID],
+      currentTime: 8,
+      getAttribute: () => MUSIC_TRACKS[HIGH_GROWTH_MUSIC_TRACK_ID],
+      pause() {},
+      load() {},
+      play: () => { playCount += 1; return Promise.resolve(); },
+    };
+    musicEnabled = true;
+    gameStarted = true;
+    gamePaused = false;
+    gameOver = false;
+    controlsSuspended = false;
+    hardMode = false;
+    growthSpeed = 3;
+    piecesLocked = 0;
+    currentMusicTrackId = HIGH_GROWTH_MUSIC_TRACK_ID;
+
+    ensureCurrentMusicTrackAllowed();
+    assert.equal(currentMusicTrackId, OPENING_MUSIC_TRACK_ID);
+    assert.equal(backgroundMusic.src, MUSIC_TRACKS[OPENING_MUSIC_TRACK_ID]);
+    assert.equal(playCount, 1);
+  `);
+});
+
 // 验证松开一种方向键不会清空另一种仍按住的输入计时。
 test('输入计时器互不干扰', () => {
   runGameAssertions(`

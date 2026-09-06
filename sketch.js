@@ -22,6 +22,15 @@ const PIECE_REPEAT_WEIGHT_BY_AGE = [0, 0.25, 0.5, 0.75];
 const KEY_BINDINGS_STORAGE_KEY = 'growing-tetris-key-bindings-v1';
 const MUSIC_ENABLED_STORAGE_KEY = 'growing-tetris-music-enabled-v1';
 const MUSIC_VOLUME = 0.32;
+const HIGH_GROWTH_MUSIC_INTERVAL_FRAMES = 150;
+const OPENING_MUSIC_TRACK_ID = 'opening';
+const HIGH_GROWTH_MUSIC_TRACK_ID = 'arcade-rush';
+const MUSIC_TRACKS = Object.freeze({
+  opening: 'assets/audio/growing-tetris-a-natural-minor-fast.wav',
+  'syncopated-a-minor': 'assets/audio/groove-01-syncopated-a-minor-v2.wav',
+  'heavy-break-d-minor': 'assets/audio/groove-02-heavy-break-d-minor-v2.wav',
+  'arcade-rush': 'assets/audio/groove-03-arcade-rush-e-minor.wav',
+});
 const DEFAULT_KEY_BINDINGS = Object.freeze({
   left: 'ArrowLeft',
   right: 'ArrowRight',
@@ -144,6 +153,7 @@ let lastKeybindingsTrigger = null;
 let keybindingControlsBound = false;
 let musicEnabled = true;
 let musicControlsBound = false;
+let currentMusicTrackId = OPENING_MUSIC_TRACK_ID;
 const heldActions = new Set();
 
 /** 初始化游戏画布、页面控件和第一局游戏；由绘图库在页面加载后调用一次。 */
@@ -667,7 +677,7 @@ function restartGame() {
   fillNextQueue();
   currentPiece = takeNextPiece();
   updateControlStates();
-  syncBackgroundMusic();
+  resetBackgroundMusicForGame();
 }
 
 /** 标记游戏结束并同步所有会受结束状态影响的按钮。 */
@@ -727,6 +737,68 @@ function updateMusicButton() {
   musicToggleButton.setAttribute('aria-pressed', String(musicEnabled));
 }
 
+/** 判断当前模式和实际生长间隔是否已经达到高速音乐的启用条件。 */
+function allowsHighGrowthMusic() {
+  return hardMode || getGrowthInterval() <= HIGH_GROWTH_MUSIC_INTERVAL_FRAMES;
+}
+
+/**
+ * 返回下一首音乐可用的候选列表。
+ * 开场曲和两首普通曲始终可用，高速街机曲只在生长速度较高时加入。
+ */
+function getEligibleMusicTrackIds() {
+  const trackIds = [
+    OPENING_MUSIC_TRACK_ID,
+    'syncopated-a-minor',
+    'heavy-break-d-minor',
+  ];
+  if (allowsHighGrowthMusic()) trackIds.push(HIGH_GROWTH_MUSIC_TRACK_ID);
+  return trackIds;
+}
+
+/** 从当前候选池随机选择下一首，并尽量避免与刚播放的曲目连续重复。 */
+function chooseNextMusicTrackId() {
+  const eligibleTrackIds = getEligibleMusicTrackIds();
+  const nonRepeatingTrackIds = eligibleTrackIds.filter((trackId) => trackId !== currentMusicTrackId);
+  return random(nonRepeatingTrackIds.length ? nonRepeatingTrackIds : eligibleTrackIds);
+}
+
+/** 切换到指定音乐、重置播放位置并预载资源；未知曲目不会改变当前状态。 */
+function setBackgroundMusicTrack(trackId) {
+  const source = MUSIC_TRACKS[trackId];
+  if (!backgroundMusic || !source) return false;
+  backgroundMusic.pause();
+  const currentSource = backgroundMusic.getAttribute?.('src') ?? backgroundMusic.src;
+  if (currentSource !== source) {
+    backgroundMusic.src = source;
+    backgroundMusic.load?.();
+  }
+  backgroundMusic.currentTime = 0;
+  currentMusicTrackId = trackId;
+  return true;
+}
+
+/** 每次新开局强制重置为指定的 A 自然小调开场曲。 */
+function resetBackgroundMusicForGame() {
+  setBackgroundMusicTrack(OPENING_MUSIC_TRACK_ID);
+  syncBackgroundMusic();
+}
+
+/** 当前曲目播放结束后，根据实时生长速度选择并播放下一首。 */
+function handleBackgroundMusicEnded() {
+  const nextTrackId = chooseNextMusicTrackId();
+  if (!nextTrackId || !setBackgroundMusicTrack(nextTrackId)) return;
+  syncBackgroundMusic();
+}
+
+/** 若高速曲已经不符合当前速度条件，则立即切换到普通候选曲目。 */
+function ensureCurrentMusicTrackAllowed() {
+  if (currentMusicTrackId !== HIGH_GROWTH_MUSIC_TRACK_ID || allowsHighGrowthMusic()) return;
+  const nextTrackId = chooseNextMusicTrackId();
+  if (!nextTrackId || !setBackgroundMusicTrack(nextTrackId)) return;
+  syncBackgroundMusic();
+}
+
 /**
  * 让背景音乐与开始、暂停、游戏结束、设置面板和页面可见状态保持一致。
  * 播放失败通常表示浏览器仍在等待用户操作，此时静默等待下一次操作重试。
@@ -765,12 +837,13 @@ function initializeMusicControls() {
   if (musicControlsBound || !backgroundMusic || !musicToggleButton) return;
   loadMusicPreference();
   backgroundMusic.volume = MUSIC_VOLUME;
-  backgroundMusic.loop = true;
+  backgroundMusic.loop = false;
+  backgroundMusic.addEventListener('ended', handleBackgroundMusicEnded);
   musicToggleButton.addEventListener('click', toggleBackgroundMusic);
   document.addEventListener('visibilitychange', handleMusicVisibilityChange);
   musicControlsBound = true;
   updateMusicButton();
-  syncBackgroundMusic();
+  resetBackgroundMusicForGame();
 }
 
 /**
@@ -1034,6 +1107,7 @@ function bindGrowthControls() {
   speedSlider.addEventListener('input', () => {
     growthSpeed = Number(speedSlider.value);
     speedOutput.value = String(growthSpeed);
+    ensureCurrentMusicTrackAllowed();
   });
 
   if (!directedGrowthCheckbox) return;
