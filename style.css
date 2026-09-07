@@ -311,18 +311,31 @@ body {
   text-align: center;
 }
 
-.keybindings-open {
-  position: fixed;
-  z-index: 21;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
-  padding: 7px 9px;
+.keybindings-open,
+.start-keybindings {
   border: 1px solid #777;
   border-radius: 3px;
   background: #171717;
   color: #fff;
   font: bold 10px/1 monospace;
   cursor: pointer;
+}
+
+.keybindings-open {
+  position: fixed;
+  z-index: 21;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  padding: 7px 9px;
+}
+
+.music-toggle,
+.feedback-button {
+  border: 1px solid #666;
+  border-radius: 3px;
+  background: #171717;
+  color: #ddd;
+  font: bold 10px/1 monospace;
 }
 
 .music-toggle {
@@ -332,33 +345,25 @@ body {
   right: calc(max(10px, env(safe-area-inset-right)) + 102px);
   min-height: 26px;
   padding: 7px 9px;
-  border: 1px solid #666;
-  border-radius: 3px;
-  background: #171717;
-  color: #ddd;
-  font: bold 10px/1 monospace;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .music-toggle:hover,
-.music-toggle:focus-visible {
+.music-toggle:focus-visible,
+.feedback-button:hover,
+.feedback-button:focus-visible {
   border-color: #999;
   background: #222;
   color: #fff;
 }
 
-.music-toggle:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.music-toggle:focus-visible,
+.feedback-button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 .start-keybindings {
   margin-top: 16px;
   padding: 7px 10px;
-  border: 1px solid #777;
-  border-radius: 3px;
-  background: #171717;
-  color: #fff;
-  font: bold 10px/1 monospace;
-  cursor: pointer;
 }
 
 .keybindings-panel {
@@ -453,11 +458,6 @@ body {
   gap: 6px;
   min-height: 34px;
   padding: 7px 10px;
-  border: 1px solid #666;
-  border-radius: 3px;
-  background: #171717;
-  color: #ddd;
-  font: bold 10px/1 monospace;
   text-decoration: none;
   box-shadow: 0 3px 12px rgb(0 0 0 / 35%);
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
@@ -472,13 +472,8 @@ body {
 
 .feedback-button:hover,
 .feedback-button:focus-visible {
-  border-color: #999;
-  background: #222;
-  color: #fff;
   transform: translateY(-1px);
 }
-
-.feedback-button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 .feedback-tooltip {
   position: absolute;

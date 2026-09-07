@@ -57,8 +57,24 @@ test('拒绝异常形状', () => {
   runGameAssertions(`
     board = new Board();
     assert.equal(board.isValid(0, 0, []), false);
+    assert.equal(board.isValid(0.5, 0, [[0, 0]]), false);
+    assert.equal(board.isValid(0, Number.NaN, [[0, 0]]), false);
+    assert.equal(board.isValid(0, 0, [null]), false);
+    assert.equal(board.isValid(0, 0, [[]]), false);
     assert.equal(board.isValid(0, 0, [[Number.NaN, 0]]), false);
     assert.equal(board.isValid(0, 0, [[0.5, 0]]), false);
+  `);
+});
+
+// 验证未知旋转参数不会被误当作顺时针旋转，也不会改变方块状态。
+test('拒绝异常旋转参数', () => {
+  runGameAssertions(`
+    board = new Board();
+    currentPiece = new Piece('T');
+    const before = JSON.stringify(currentPiece.shape);
+    assert.equal(currentPiece.rotate(0), false);
+    assert.equal(currentPiece.rotate(3), false);
+    assert.equal(JSON.stringify(currentPiece.shape), before);
   `);
 });
 
@@ -317,7 +333,7 @@ test('背景音乐固定开场并在结束后轮换', () => {
     assert.equal(backgroundMusic.currentTime, 0);
     assert.equal(playCount, 1);
 
-    handleBackgroundMusicEnded();
+    playNextBackgroundMusicTrack();
     assert.equal(currentMusicTrackId, 'syncopated-a-minor');
     assert.equal(backgroundMusic.src, MUSIC_TRACKS['syncopated-a-minor']);
     assert.equal(playCount, 2);
@@ -351,6 +367,53 @@ test('降低生长速度会退出高速曲', () => {
     assert.equal(backgroundMusic.src, MUSIC_TRACKS[OPENING_MUSIC_TRACK_ID]);
     assert.equal(playCount, 1);
   `);
+});
+
+// 验证异常计时和被脚本篡改的滑杆值不会让游戏状态变成负数或非数字。
+test('异常计时与生长速度安全归一化', () => {
+  runGameAssertions(`
+    assert.equal(normalizeElapsedMs(-100), 0);
+    assert.equal(normalizeElapsedMs(Number.NaN), 0);
+    assert.equal(normalizeElapsedMs(Number.POSITIVE_INFINITY), 0);
+    assert.equal(normalizeElapsedMs(125), 125);
+
+    freezeRemainingMs = 1000;
+    updateFreezeTimer(Number.NaN);
+    assert.equal(freezeRemainingMs, 1000);
+    updateFreezeTimer(-500);
+    assert.equal(freezeRemainingMs, 1000);
+
+    speedSlider = { value: 'bad', min: '1', max: '10' };
+    speedOutput = { value: '' };
+    currentMusicTrackId = OPENING_MUSIC_TRACK_ID;
+    handleGrowthSpeedInput();
+    assert.equal(growthSpeed, 3);
+    assert.equal(speedSlider.value, '3');
+    assert.equal(speedOutput.value, '3');
+
+    speedSlider.value = '99';
+    handleGrowthSpeedInput();
+    assert.equal(growthSpeed, 10);
+    speedSlider.value = '-5';
+    handleGrowthSpeedInput();
+    assert.equal(growthSpeed, 1);
+  `);
+});
+
+// 验证音乐配置没有重复路径，且每个资源都是存在并具有完整文件头的 WAV 文件。
+test('背景音乐资源配置完整', () => {
+  const context = createGameContext();
+  vm.runInContext(source, context);
+  const sources = vm.runInContext('Object.values(MUSIC_TRACKS)', context);
+  assert.equal(sources.length, 4);
+  assert.equal(new Set(sources).size, sources.length);
+  sources.forEach((relativePath) => {
+    const audioPath = path.join(__dirname, '..', relativePath);
+    const audio = fs.readFileSync(audioPath);
+    assert.equal(audio.subarray(0, 4).toString('ascii'), 'RIFF');
+    assert.equal(audio.subarray(8, 12).toString('ascii'), 'WAVE');
+    assert.equal(audio.length > 44, true);
+  });
 });
 
 // 验证松开一种方向键不会清空另一种仍按住的输入计时。

@@ -11,6 +11,7 @@ const HORIZONTAL_HOLD_DELAY_MS = 140;
 const HORIZONTAL_REPEAT_MS = 70;
 const SOFT_DROP_HOLD_DELAY_MS = 60;
 const SOFT_DROP_REPEAT_MS = 45;
+const MAX_FRAME_ELAPSED_MS = 100;
 const FREEZE_DURATION_MS = 8_000;
 const GROWTH_WARNING_FRAMES = 45;
 const PIECES_PER_SPEED_LEVEL = 5;
@@ -168,7 +169,12 @@ function setup() {
   restartGame();
   bindTouchControls();
   bindStartScreen();
-  setTimeout(initializeKeybindingControls, 0);
+  initializeKeybindingControls();
+}
+
+/** 将外部计时值限制为非负有限数，防止异常帧时间污染所有计时器。 */
+function normalizeElapsedMs(elapsedMs) {
+  return Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
 }
 
 /**
@@ -184,7 +190,7 @@ function draw() {
   }
 
   if (gameStarted && !gameOver && !gamePaused && !controlsSuspended) {
-    const elapsedMs = Math.min(deltaTime, 100);
+    const elapsedMs = Math.min(normalizeElapsedMs(deltaTime), MAX_FRAME_ELAPSED_MS);
     handleHeldKeys(elapsedMs);
     if (isGrowthFrozen()) {
       updateFreezeTimer(elapsedMs);
@@ -227,8 +233,11 @@ class Board {
    * 允许方块暂时位于棋盘顶部之外，但不允许越过左右、底部或重叠锁定格。
    */
   isValid(newX, newY, shape) {
-    if (!Array.isArray(shape) || shape.length === 0) return false;
-    return shape.every(([dx, dy]) => {
+    if (!Number.isInteger(newX) || !Number.isInteger(newY)
+        || !Array.isArray(shape) || shape.length === 0) return false;
+    return shape.every((cell) => {
+      if (!Array.isArray(cell) || cell.length < 2) return false;
+      const [dx, dy] = cell;
       if (!Number.isInteger(dx) || !Number.isInteger(dy)) return false;
       const col = newX + dx;
       const row = newY + dy;
@@ -331,6 +340,7 @@ class Piece {
    * 180° 由两次超级旋转系统的四分之一旋转组成，任一步失败都会完整回滚。
    */
   rotate(turns = 1) {
+    if (![1, -1, 2].includes(turns)) return false;
     if (turns === 2) {
       const before = {
         shape: this.shape.map(([x, y]) => [x, y]),
@@ -711,23 +721,33 @@ function cacheControls() {
   musicToggleButton = document.querySelector('#music-toggle');
 }
 
+/** 安全读取浏览器本地存储；不可用时返回空值而不影响游戏。 */
+function readLocalStorageItem(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (_) {
+    return null;
+  }
+}
+
+/** 安全写入浏览器本地存储，并返回是否保存成功。 */
+function writeLocalStorageItem(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 /** 从浏览器本地存储读取音乐开关；存储不可用时默认开启。 */
 function loadMusicPreference() {
-  musicEnabled = true;
-  try {
-    musicEnabled = window.localStorage.getItem(MUSIC_ENABLED_STORAGE_KEY) !== 'false';
-  } catch (_) {
-    musicEnabled = true;
-  }
+  musicEnabled = readLocalStorageItem(MUSIC_ENABLED_STORAGE_KEY) !== 'false';
 }
 
 /** 保存音乐开关；隐私模式或存储失败不会影响当前会话。 */
 function saveMusicPreference() {
-  try {
-    window.localStorage.setItem(MUSIC_ENABLED_STORAGE_KEY, String(musicEnabled));
-  } catch (_) {
-    // 本地存储不可用时只保留当前页面中的设置。
-  }
+  writeLocalStorageItem(MUSIC_ENABLED_STORAGE_KEY, String(musicEnabled));
 }
 
 /** 根据音乐开关更新按钮文字和无障碍按下状态。 */
@@ -747,13 +767,10 @@ function allowsHighGrowthMusic() {
  * 开场曲和两首普通曲始终可用，高速街机曲只在生长速度较高时加入。
  */
 function getEligibleMusicTrackIds() {
-  const trackIds = [
-    OPENING_MUSIC_TRACK_ID,
-    'syncopated-a-minor',
-    'heavy-break-d-minor',
-  ];
-  if (allowsHighGrowthMusic()) trackIds.push(HIGH_GROWTH_MUSIC_TRACK_ID);
-  return trackIds;
+  const highGrowthMusicAllowed = allowsHighGrowthMusic();
+  return Object.keys(MUSIC_TRACKS).filter((trackId) => (
+    trackId !== HIGH_GROWTH_MUSIC_TRACK_ID || highGrowthMusicAllowed
+  ));
 }
 
 /** 从当前候选池随机选择下一首，并尽量避免与刚播放的曲目连续重复。 */
@@ -763,8 +780,8 @@ function chooseNextMusicTrackId() {
   return random(nonRepeatingTrackIds.length ? nonRepeatingTrackIds : eligibleTrackIds);
 }
 
-/** 切换到指定音乐、重置播放位置并预载资源；未知曲目不会改变当前状态。 */
-function setBackgroundMusicTrack(trackId) {
+/** 切换并播放指定音乐；未知曲目不会改变当前状态。 */
+function playBackgroundMusicTrack(trackId) {
   const source = MUSIC_TRACKS[trackId];
   if (!backgroundMusic || !source) return false;
   backgroundMusic.pause();
@@ -775,28 +792,25 @@ function setBackgroundMusicTrack(trackId) {
   }
   backgroundMusic.currentTime = 0;
   currentMusicTrackId = trackId;
+  syncBackgroundMusic();
   return true;
 }
 
 /** 每次新开局强制重置为指定的 A 自然小调开场曲。 */
 function resetBackgroundMusicForGame() {
-  setBackgroundMusicTrack(OPENING_MUSIC_TRACK_ID);
-  syncBackgroundMusic();
+  playBackgroundMusicTrack(OPENING_MUSIC_TRACK_ID);
 }
 
-/** 当前曲目播放结束后，根据实时生长速度选择并播放下一首。 */
-function handleBackgroundMusicEnded() {
+/** 根据实时生长速度选择并播放下一首曲目。 */
+function playNextBackgroundMusicTrack() {
   const nextTrackId = chooseNextMusicTrackId();
-  if (!nextTrackId || !setBackgroundMusicTrack(nextTrackId)) return;
-  syncBackgroundMusic();
+  return Boolean(nextTrackId && playBackgroundMusicTrack(nextTrackId));
 }
 
 /** 若高速曲已经不符合当前速度条件，则立即切换到普通候选曲目。 */
 function ensureCurrentMusicTrackAllowed() {
   if (currentMusicTrackId !== HIGH_GROWTH_MUSIC_TRACK_ID || allowsHighGrowthMusic()) return;
-  const nextTrackId = chooseNextMusicTrackId();
-  if (!nextTrackId || !setBackgroundMusicTrack(nextTrackId)) return;
-  syncBackgroundMusic();
+  playNextBackgroundMusicTrack();
 }
 
 /**
@@ -827,20 +841,15 @@ function toggleBackgroundMusic() {
   syncBackgroundMusic();
 }
 
-/** 页面切到后台时暂停音乐，重新可见时在符合游戏状态的情况下恢复。 */
-function handleMusicVisibilityChange() {
-  syncBackgroundMusic();
-}
-
-/** 初始化音乐音量、循环播放、持久化开关和页面事件；重复调用不会重复绑定。 */
+/** 初始化音乐音量、曲目轮换、持久化开关和页面事件；重复调用不会重复绑定。 */
 function initializeMusicControls() {
   if (musicControlsBound || !backgroundMusic || !musicToggleButton) return;
   loadMusicPreference();
   backgroundMusic.volume = MUSIC_VOLUME;
   backgroundMusic.loop = false;
-  backgroundMusic.addEventListener('ended', handleBackgroundMusicEnded);
+  backgroundMusic.addEventListener('ended', playNextBackgroundMusicTrack);
   musicToggleButton.addEventListener('click', toggleBackgroundMusic);
-  document.addEventListener('visibilitychange', handleMusicVisibilityChange);
+  document.addEventListener('visibilitychange', syncBackgroundMusic);
   musicControlsBound = true;
   updateMusicButton();
   resetBackgroundMusicForGame();
@@ -852,7 +861,6 @@ function initializeMusicControls() {
  */
 function initializeKeybindingControls() {
   if (keybindingControlsBound) return;
-  cacheControls();
   if (!keybindingsOpenButtons.length || !keybindingsPanel || !keybindingsList) return;
   loadKeyBindings();
   bindKeybindingControls();
@@ -879,21 +887,25 @@ function isBindableCode(code) {
 function loadKeyBindings() {
   keyBindings = { ...DEFAULT_KEY_BINDINGS };
   try {
-    const saved = JSON.parse(window.localStorage.getItem(KEY_BINDINGS_STORAGE_KEY));
+    const saved = JSON.parse(readLocalStorageItem(KEY_BINDINGS_STORAGE_KEY));
     if (isValidKeyBindings(saved)) keyBindings = { ...saved };
   } catch (_) {
-    keyBindings = { ...DEFAULT_KEY_BINDINGS };
+    // 无法解析的数据保持上方已经设置的默认键位。
   }
   updateDisplayedKeyLabels();
 }
 
 /** 将当前键位写入浏览器本地存储；存储不可用时保持当前会话设置。 */
 function saveKeyBindings() {
-  try {
-    window.localStorage.setItem(KEY_BINDINGS_STORAGE_KEY, JSON.stringify(keyBindings));
-  } catch (_) {
-    // 隐私模式或存储空间不可用不会影响本次游戏。
-  }
+  writeLocalStorageItem(KEY_BINDINGS_STORAGE_KEY, JSON.stringify(keyBindings));
+}
+
+/** 保存键位修改并统一刷新静态标签与设置面板，避免各入口遗漏同步步骤。 */
+function commitKeyBindingChanges() {
+  bindingCaptureAction = null;
+  saveKeyBindings();
+  updateDisplayedKeyLabels();
+  renderKeybindingsList();
 }
 
 /** 将键盘事件代码转换成适合界面显示的短标签。 */
@@ -995,20 +1007,14 @@ function handleKeyCapture(event) {
     keyBindings[conflictingAction] = previousCode;
   }
   keyBindings[targetAction] = event.code;
-  bindingCaptureAction = null;
-  saveKeyBindings();
-  updateDisplayedKeyLabels();
-  renderKeybindingsList();
+  commitKeyBindingChanges();
   return true;
 }
 
 /** 恢复所有默认键位并立即保存和刷新界面。 */
 function resetKeyBindings() {
   keyBindings = { ...DEFAULT_KEY_BINDINGS };
-  bindingCaptureAction = null;
-  saveKeyBindings();
-  updateDisplayedKeyLabels();
-  renderKeybindingsList();
+  commitKeyBindingChanges();
 }
 
 /** 在文档级别分派改键面板的指针操作，避免动态节点重绘后丢失监听。 */
@@ -1096,6 +1102,37 @@ function updateModeButton() {
   if (directedGrowthCheckbox) directedGrowthCheckbox.disabled = gamePaused;
 }
 
+/** 将生长速度限制为滑杆允许的整数范围，异常值回退到默认速度 3。 */
+function normalizeGrowthSpeed(value, minimum = 1, maximum = 10) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 3;
+  const lowerBound = Math.min(minimum, maximum);
+  const upperBound = Math.max(minimum, maximum);
+  return Math.min(upperBound, Math.max(lowerBound, Math.round(numericValue)));
+}
+
+/** 从滑杆读取并同步生长速度，同时确保当前音乐仍符合速度条件。 */
+function handleGrowthSpeedInput() {
+  if (!speedSlider || !speedOutput) return;
+  const minimum = Number(speedSlider.min) || 1;
+  const maximum = Number(speedSlider.max) || 10;
+  growthSpeed = normalizeGrowthSpeed(speedSlider.value, minimum, maximum);
+  speedSlider.value = String(growthSpeed);
+  speedOutput.value = String(growthSpeed);
+  ensureCurrentMusicTrackAllowed();
+}
+
+/** 同步定向生长开关，并在需要时为当前方块重新选择警告格。 */
+function handleDirectedGrowthChange() {
+  directedGrowth = Boolean(directedGrowthCheckbox?.checked);
+  if (!currentPiece) return;
+  const hadWarning = Boolean(currentPiece.warning);
+  currentPiece.warning = null;
+  if (hadWarning || (hardMode && hardOperationCount % 4 !== 0)) {
+    currentPiece.chooseWarning();
+  }
+}
+
 /**
  * 读取生长相关控件的初始值并监听后续变化。
  * 切换定向生长时会重新选择警告格，保证提示符合新规则。
@@ -1103,24 +1140,12 @@ function updateModeButton() {
 function bindGrowthControls() {
   if (!speedSlider || !speedOutput) return;
 
-  growthSpeed = Number(speedSlider.value);
-  speedSlider.addEventListener('input', () => {
-    growthSpeed = Number(speedSlider.value);
-    speedOutput.value = String(growthSpeed);
-    ensureCurrentMusicTrackAllowed();
-  });
+  handleGrowthSpeedInput();
+  speedSlider.addEventListener('input', handleGrowthSpeedInput);
 
   if (!directedGrowthCheckbox) return;
-  directedGrowth = directedGrowthCheckbox.checked;
-  directedGrowthCheckbox.addEventListener('change', () => {
-    directedGrowth = directedGrowthCheckbox.checked;
-    if (!currentPiece) return;
-    const hadWarning = Boolean(currentPiece?.warning);
-    currentPiece.warning = null;
-    if (hadWarning || (hardMode && hardOperationCount % 4 !== 0)) {
-      currentPiece.chooseWarning();
-    }
-  });
+  handleDirectedGrowthChange();
+  directedGrowthCheckbox.addEventListener('change', handleDirectedGrowthChange);
 }
 
 /** 在普通与困难模式之间切换，并按新模式重新开局。 */
@@ -1153,7 +1178,7 @@ function isGrowthFrozen() {
 
 /** 按真实经过时间减少冻结剩余时长，并及时刷新按钮显示。 */
 function updateFreezeTimer(elapsedMs) {
-  freezeRemainingMs = Math.max(0, freezeRemainingMs - Math.max(0, elapsedMs));
+  freezeRemainingMs = Math.max(0, freezeRemainingMs - normalizeElapsedMs(elapsedMs));
   updateFreezeButton();
 }
 
@@ -1411,6 +1436,7 @@ function resetInputTimers() {
  * 可继续下落时按固定间隔下降；已落地时累计到上限后锁定。
  */
 function updateFalling(elapsedMs) {
+  elapsedMs = normalizeElapsedMs(elapsedMs);
   if (!board.isValid(currentPiece.x, currentPiece.y + 1, currentPiece.shape)) {
     fallElapsedMs = 0;
     lockElapsedMs += elapsedMs;
@@ -1430,6 +1456,7 @@ function updateFalling(elapsedMs) {
  * 首次按键由键盘按下入口处理并计作一次操作；长按产生的重复移动不重复计数。
  */
 function handleHeldKeys(elapsedMs) {
+  elapsedMs = normalizeElapsedMs(elapsedMs);
   const leftHeld = heldActions.has('left');
   const rightHeld = heldActions.has('right');
   const horizontalDirection = leftHeld === rightHeld
