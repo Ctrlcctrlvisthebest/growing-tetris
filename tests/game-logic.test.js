@@ -5,7 +5,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const sourcePath = path.join(__dirname, '..', 'sketch.js');
-const source = fs.readFileSync(sourcePath, 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'leaderboard.js'), 'utf8') + '\n'
+  + fs.readFileSync(path.join(__dirname, '..', 'score-history.js'), 'utf8')
+  + '\n' + fs.readFileSync(sourcePath, 'utf8');
 
 /** 创建带有最少绘图环境替身的隔离游戏运行环境。 */
 function createGameContext() {
@@ -14,6 +16,9 @@ function createGameContext() {
     assert,
     console,
     Math,
+    AbortController,
+    setTimeout,
+    clearTimeout,
     random: (values) => (Array.isArray(values) ? values[0] : 0),
     color: () => ({ setAlpha() {} }),
     document: { querySelector: () => null, querySelectorAll: () => [] },
@@ -21,8 +26,11 @@ function createGameContext() {
       innerWidth: 1000,
       matchMedia: () => ({ matches: false }),
       localStorage: {
+        get length() { return storage.size; },
+        key: (index) => [...storage.keys()][index] ?? null,
         getItem: (key) => storage.get(key) ?? null,
         setItem: (key, value) => storage.set(key, value),
+        removeItem: (key) => storage.delete(key),
       },
     },
     LEFT_ARROW: 37,
@@ -38,7 +46,7 @@ function createGameContext() {
 /** 在隔离环境中加载游戏源码并执行一段状态断言。 */
 function runGameAssertions(assertionSource, overrides = {}) {
   const context = Object.assign(createGameContext(), overrides);
-  vm.runInContext(`${source}\n${assertionSource}`, context);
+  return vm.runInContext(`${source}\n${assertionSource}`, context);
 }
 
 // 验证多行消除会删除目标行并正确补充空行。
@@ -400,7 +408,7 @@ test('异常计时与生长速度安全归一化', () => {
   `);
 });
 
-// 验证音乐配置没有重复路径，且每个资源都是存在并具有完整文件头的 WAV 文件。
+// 验证压缩音乐存在、包含 MP4 容器头和媒体数据，且小于原始 WAV。
 test('背景音乐资源配置完整', () => {
   const context = createGameContext();
   vm.runInContext(source, context);
@@ -410,9 +418,12 @@ test('背景音乐资源配置完整', () => {
   sources.forEach((relativePath) => {
     const audioPath = path.join(__dirname, '..', relativePath);
     const audio = fs.readFileSync(audioPath);
-    assert.equal(audio.subarray(0, 4).toString('ascii'), 'RIFF');
-    assert.equal(audio.subarray(8, 12).toString('ascii'), 'WAVE');
-    assert.equal(audio.length > 44, true);
+    assert.equal(audio.subarray(4, 8).toString('ascii'), 'ftyp');
+    assert.equal(audio.includes(Buffer.from('moov')), true);
+    assert.equal(audio.includes(Buffer.from('mdat')), true);
+    assert.equal(audio.length > 4096, true);
+    const original = fs.statSync(audioPath.replace(/\.m4a$/, '.wav'));
+    assert.equal(audio.length < original.size / 3, true);
   });
 });
 
@@ -456,5 +467,382 @@ test('锁定延迟重置上限', () => {
       currentPiece.move(index % 2 === 0 ? -1 : 1, 0);
     }
     assert.equal(lockDelayResetCount, MAX_LOCK_DELAY_RESETS);
+  `);
+});
+
+test('落点缓存随移动、旋转、生长、锁定和消行刷新', () => {
+  runGameAssertions(`
+    board = new Board();
+    currentPiece = new Piece('T');
+    const isValid = board.isValid.bind(board);
+    let checks = 0;
+    board.isValid = (...args) => { checks += 1; return isValid(...args); };
+    function verifyLanding() {
+      let expected = currentPiece.y;
+      while (isValid(currentPiece.x, expected + 1, currentPiece.shape)) expected += 1;
+      assert.equal(currentPiece.getLandingY(), expected);
+      const before = checks;
+      assert.equal(currentPiece.getLandingY(), expected);
+      assert.equal(checks, before, 'unchanged preview performs no collision scans');
+    }
+    verifyLanding();
+    currentPiece.move(-1, 0);
+    verifyLanding();
+    currentPiece.move(0, 1);
+    verifyLanding();
+    currentPiece.rotate();
+    verifyLanding();
+    currentPiece.warning = [2, 2];
+    currentPiece.commitWarningGrowth();
+    verifyLanding();
+    board.lock({ x: 0, y: ROWS - 1, shape: Array.from({ length: COLS }, (_, x) => [x, 0]), color: '#fff' });
+    verifyLanding();
+    assert.equal(board.clearLines(), 1);
+    verifyLanding();
+    currentPiece = restorePiece(snapshotPiece(currentPiece));
+    verifyLanding();
+  `);
+});
+
+test('静态棋盘只在锁定和消行后重绘', () => {
+  runGameAssertions(`
+    let painted = 0;
+    let copies = 0;
+    const context = { clearRect() {}, strokeRect() {}, fillRect() { painted += 1; } };
+    createCanvasLayer = () => ({ getContext: () => context });
+    drawLayer = () => { copies += 1; };
+    board = new Board();
+    board.draw();
+    for (let i = 0; i < 60; i += 1) board.draw();
+    assert.equal(painted, ROWS * COLS);
+    assert.equal(copies, 61);
+    board.lock({ x: 0, y: ROWS - 1, shape: Array.from({ length: COLS }, (_, x) => [x, 0]), color: '#fff' });
+    board.draw();
+    assert.equal(painted, ROWS * COLS * 2);
+    board.clearLines();
+    board.draw();
+    assert.equal(painted, ROWS * COLS * 3);
+  `);
+});
+
+test('冻结按钮仅在显示值改变时更新 DOM', () => {
+  runGameAssertions(`
+    let labelWrites = 0;
+    let label = '';
+    freezeButton = {
+      disabled: true,
+      get textContent() { return label; },
+      set textContent(value) { label = value; labelWrites += 1; },
+    };
+    freezeRemainingMs = 8000;
+    updateFreezeButton();
+    updateFreezeTimer(10);
+    updateFreezeTimer(10);
+    assert.equal(labelWrites, 1);
+    updateFreezeTimer(100);
+    assert.equal(labelWrites, 2);
+    assert.equal(label, 'FROZEN 7.9s');
+  `);
+});
+
+test('帧调度在暂停、设置、后台和结束时停止，恢复不补算后台时间', () => {
+  runGameAssertions(`
+    const pending = new Map();
+    const elapsed = [];
+    let id = 0;
+    requestAnimationFrame = (callback) => { pending.set(++id, callback); return id; };
+    cancelAnimationFrame = (request) => pending.delete(request);
+    frameCount = 0;
+    draw = (ms) => elapsed.push(ms);
+    gameCanvas = {};
+    function tick(time) {
+      const callbacks = [...pending.values()];
+      pending.clear();
+      callbacks.forEach((callback) => callback(time));
+    }
+    syncGameLoop();
+    tick(0);
+    assert.equal(pending.size, 0, 'start screen stays idle');
+    gameStarted = true;
+    syncGameLoop();
+    tick(100);
+    assert.equal(pending.size, 1);
+    gamePaused = true;
+    syncGameLoop();
+    tick(200);
+    assert.equal(pending.size, 0);
+    gamePaused = false;
+    controlsSuspended = true;
+    syncGameLoop();
+    tick(300);
+    assert.equal(pending.size, 0);
+    controlsSuspended = false;
+    document.hidden = true;
+    syncGameLoop();
+    assert.equal(pending.size, 0);
+    document.hidden = false;
+    syncGameLoop();
+    syncGameLoop();
+    assert.equal(pending.size, 1, 'state updates never duplicate the loop');
+    tick(30000);
+    assert.equal(elapsed.at(-1), 0);
+    tick(30000 + FRAME_INTERVAL_MS);
+    assert.ok(Math.abs(elapsed.at(-1) - FRAME_INTERVAL_MS) < 0.01);
+    gameOver = true;
+    syncGameLoop();
+    tick(31000);
+    assert.equal(pending.size, 0);
+  `);
+});
+
+test('60 Hz 和 120 Hz 屏幕每秒执行相同次数的游戏更新', () => {
+  runGameAssertions(`
+    const pending = new Map();
+    let id = 0;
+    requestAnimationFrame = (callback) => { pending.set(++id, callback); return id; };
+    cancelAnimationFrame = (request) => pending.delete(request);
+    frameCount = 0;
+    let draws = 0;
+    draw = () => { draws += 1; };
+    gameCanvas = {};
+    gameStarted = true;
+    function simulate(refreshRate) {
+      draws = 0;
+      syncGameLoop();
+      for (let frame = 0; frame <= refreshRate; frame += 1) {
+        const callbacks = [...pending.values()];
+        pending.clear();
+        callbacks.forEach((callback) => callback(frame * 1000 / refreshRate));
+      }
+      return draws;
+    }
+    assert.equal(simulate(60), 61);
+    assert.equal(simulate(120), 61);
+    assert.equal(simulate(144), 61);
+  `);
+});
+
+test('单局成绩持续更新，结束、打开历史和重启不重复记录', () => {
+  runGameAssertions(`
+    restartGame();
+    assert.equal(readScoreRecords().length, 0, 'start screen creates no score');
+    startGame();
+    const runId = activeScoreRecord.id;
+    assert.equal(readScoreRecords().length, 1);
+    hardDrop();
+    assert.equal(readScoreRecords()[0].score, score);
+    score = 1234;
+    endGame();
+    endGame();
+    saveScoreProgress();
+    assert.equal(readScoreRecords().length, 1);
+    assert.equal(readScoreRecords()[0].score, 1234);
+    assert.equal(readScoreRecords()[0].status, 'completed');
+    restartGame();
+    const records = readScoreRecords();
+    assert.equal(records.length, 2);
+    assert.equal(records.find((record) => record.id === runId).score, 1234);
+    assert.equal(activeScoreRecord.score, 0);
+    assert.notEqual(activeScoreRecord.id, runId);
+  `);
+});
+
+test('重新开始和切换模式保存上一局分数及原模式', () => {
+  runGameAssertions(`
+    restartGame();
+    startGame();
+    const firstId = activeScoreRecord.id;
+    score = 200;
+    handleModeRequest();
+    let previous = readScoreRecords().find((record) => record.id === firstId);
+    assert.equal(previous.mode, 'normal');
+    assert.equal(previous.score, 200);
+    assert.equal(previous.status, 'mode-change');
+    assert.equal(activeScoreRecord.mode, 'hard');
+    const secondId = activeScoreRecord.id;
+    score = 300;
+    restartGame();
+    previous = readScoreRecords().find((record) => record.id === secondId);
+    assert.equal(previous.mode, 'hard');
+    assert.equal(previous.score, 300);
+    assert.equal(previous.status, 'restarted');
+  `);
+});
+
+test('重新加载后仍能读取已完成成绩和中途保存的分数', () => {
+  const first = createGameContext();
+  vm.runInContext(source + `
+    restartGame(); startGame(); score = 456; endGame();
+    restartGame(); score = 78; saveScoreProgress();
+  `, first);
+  const reloaded = createGameContext();
+  reloaded.window.localStorage = first.window.localStorage;
+  vm.runInContext(source + `
+    const records = readScoreRecords();
+    assert.equal(records.length, 2);
+    assert.equal(records.find((record) => record.status === 'completed').score, 456);
+    const unfinished = records.find((record) => record.status === 'playing');
+    assert.equal(unfinished.score, 78);
+    assert.equal(scoreRecordStatus(unfinished), 'Unfinished');
+  `, reloaded);
+});
+
+test('不同会话分别保存成绩，不覆盖已有记录', () => {
+  const first = createGameContext();
+  const second = createGameContext();
+  second.window.localStorage = first.window.localStorage;
+  vm.runInContext(source + 'restartGame(); startGame(); score = 100; saveScoreProgress();', first);
+  vm.runInContext(source + 'restartGame(); startGame(); score = 200; endGame();', second);
+  vm.runInContext(`score = 300; endGame();
+    assert.deepEqual(Array.from(readScoreRecords(), (record) => record.score).sort(), [200, 300]);
+  `, first);
+});
+
+test('损坏成绩被忽略，存储不可用时保留本次会话记录', () => {
+  runGameAssertions(`
+    restartGame(); startGame(); score = 150; endGame();
+    window.localStorage.setItem(SCORE_STORAGE_PREFIX + 'broken', '{');
+    window.localStorage.setItem(SCORE_STORAGE_PREFIX + 'invalid', JSON.stringify({ ...activeScoreRecord, id: 'invalid', score: -2 }));
+    window.localStorage.setItem('other-app', JSON.stringify(activeScoreRecord));
+    assert.equal(readScoreRecords().length, 1);
+    window.localStorage.setItem = () => { throw new Error('quota exceeded'); };
+    restartGame(); score = 500; endGame();
+    assert.equal(readScoreRecords().length, 2);
+    assert.equal(unsavedScoreRecords.size, 1);
+    assert.equal([...unsavedScoreRecords.values()][0].score, 500);
+    Object.defineProperty(window, 'localStorage', { get() { throw new Error('blocked'); } });
+    assert.equal(readScoreRecords().length, 1);
+    assert.equal(scoreStorageReadFailed, true);
+    restartGame(); score = 600; endGame();
+    assert.equal(readScoreRecords().length, 2);
+  `);
+});
+
+test('成绩面板拦截游戏键，关闭后保留原有暂停状态', () => {
+  runGameAssertions(`
+    restartGame(); startGame(); gamePaused = true;
+    controlsSuspended = true;
+    scoreHistoryDialog = { open: true };
+    const piece = currentPiece;
+    assert.equal(keyPressed({ code: 'Space' }), undefined);
+    assert.equal(currentPiece, piece);
+    handleKeybindingKeyDown({ code: 'Escape', preventDefault() { assert.fail('native dialog handles Escape'); } });
+    scoreHistoryDialog.open = false;
+    resumeAfterScoreHistory();
+    assert.equal(gamePaused, true);
+    assert.equal(controlsSuspended, false);
+    assert.equal(keyPressed({ code: 'Space', target: { closest: () => ({}) } }), undefined);
+  `);
+});
+
+test('CSV 导出包含所有分页中的成绩，且只创建本地下载', () => {
+  runGameAssertions(`
+    const downloads = [];
+    let exported = '';
+    let revoked = null;
+    Blob = class { constructor(parts, options) { exported = parts.join(''); assert.match(options.type, /text\\/csv/); } };
+    URL = { createObjectURL: () => 'blob:local-test', revokeObjectURL: (url) => { revoked = url; } };
+    document.body = { append() {} };
+    document.createElement = () => ({ click() { downloads.push({ href: this.href, name: this.download }); }, remove() {} });
+    setTimeout = (callback) => callback();
+    scoreHistoryRecords = Array.from({ length: 25 }, (_, index) => ({
+      id: String(index), score: index * 100, mode: index % 2 ? 'hard' : 'normal',
+      startedAt: 1800000000000 + index, updatedAt: 1800000000000 + index, status: 'completed',
+    }));
+    scoreHistoryPage = 1;
+    exportScoreHistory();
+    assert.equal(exported.split('\\r\\n').length, 26);
+    assert.match(exported, /2400,normal,Game over/);
+    assert.equal(downloads.length, 1);
+    assert.equal(downloads[0].href, 'blob:local-test');
+    assert.match(downloads[0].name, /^growing-tetris-scores-.*\\.csv$/);
+    assert.equal(revoked, 'blob:local-test');
+  `);
+});
+
+test('全球榜只提交新完成的对局，并使用开局时的昵称', () => {
+  runGameAssertions(`
+    const input = { value: '  Alice  ' };
+    document.querySelector = (selector) => selector === '[data-player-name]' ? input : null;
+    restartGame(); startGame();
+    score = 200; saveScoreProgress();
+    assert.equal(pendingGlobalScores.size, 0);
+    restartGame();
+    assert.equal(pendingGlobalScores.size, 0);
+    input.value = 'Bob';
+    score = 400; endGame(); endGame();
+    assert.equal(pendingGlobalScores.size, 1);
+    const payload = [...pendingGlobalScores.values()][0];
+    assert.equal(payload.playerName, 'Alice');
+    assert.equal(payload.score, 400);
+    assert.equal(payload.mode, 'normal');
+    assert.equal(payload.runId, activeScoreRecord.id);
+    assert.equal(readScoreRecords().length, 2);
+  `);
+});
+
+test('断网队列跨刷新保留，补传成功后只移除队列，不上传旧历史', async () => {
+  const first = createGameContext();
+  await vm.runInContext(source + `
+    (async () => {
+      restartGame(); startGame(); score = 700; endGame();
+      const old = { ...activeScoreRecord, id: 'historical-run-1', score: 900 };
+      window.localStorage.setItem(SCORE_STORAGE_PREFIX + old.id, JSON.stringify(old));
+      fetch = async () => { throw new Error('offline'); };
+      await assert.rejects(flushGlobalScores(), /offline/);
+      assert.equal(pendingGlobalScores.size, 1);
+    })();
+  `, first);
+  const reloaded = createGameContext();
+  reloaded.window.localStorage = first.window.localStorage;
+  await vm.runInContext(source + `
+    (async () => {
+      const uploaded = [];
+      fetch = async (url, options) => {
+        assert.equal(url, '/api/scores');
+        uploaded.push(JSON.parse(options.body));
+        return { ok: true, json: async () => ({ saved: true }) };
+      };
+      await flushGlobalScores();
+      assert.equal(uploaded.length, 1);
+      assert.equal(uploaded[0].score, 700);
+      assert.equal(pendingGlobalScores.size, 0);
+      assert.equal(window.localStorage.getItem(GLOBAL_SCORE_QUEUE_PREFIX + uploaded[0].runId), null);
+      assert.equal(readScoreRecords().length, 2);
+      await flushGlobalScores();
+      assert.equal(uploaded.length, 1);
+    })();
+  `, reloaded);
+});
+
+test('被拒绝的成绩不阻塞后续上传，限流时仍可读取排行榜', async () => {
+  await runGameAssertions(`
+    (async () => {
+      restartGame(); startGame(); endGame();
+      restartGame(); endGame();
+      let uploads = 0;
+      fetch = async () => ++uploads === 1
+        ? { ok: false, status: 400 }
+        : { ok: true, json: async () => ({ saved: true }) };
+      await flushGlobalScores();
+      assert.equal(uploads, 2);
+      assert.equal(pendingGlobalScores.size, 0);
+      assert.equal(readScoreRecords().length, 2);
+      assert.equal(rejectedGlobalScore, true);
+      restartGame(); endGame();
+      const status = { textContent: '' };
+      document.querySelector = (selector) => selector === '#global-leaderboard-status'
+        ? status : selector === '#global-leaderboard-mode' ? { value: 'hard' } : null;
+      const requests = [];
+      fetch = async (url, options) => {
+        requests.push(url);
+        return options.method === 'POST' ? { ok: false, status: 429 }
+          : { ok: true, json: async () => ({ entries: [] }) };
+      };
+      await refreshGlobalLeaderboard();
+      assert.equal(requests.join(','), '/api/scores,/api/leaderboard?mode=hard');
+      assert.equal(pendingGlobalScores.size, 1);
+      assert.match(status.textContent, /Global scores loaded.*waiting to upload/);
+    })();
   `);
 });

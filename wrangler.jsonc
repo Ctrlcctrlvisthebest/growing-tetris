@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "growing-tetris-leaderboard",
+  "main": "server/worker.mjs",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "growing-tetris-leaderboard",
+    "database_id": "63ae2e5e-17ab-4955-9b5f-865f54307e71",
+    "migrations_dir": "migrations"
+  }],
+  "ratelimits": [{
+    "name": "SCORE_LIMITER",
+    "namespace_id": "981704612",
+    "simple": { "limit": 30, "period": 60 }
+  }],
+  "vars": {
+    "ALLOWED_ORIGINS": "http://127.0.0.1:8876,http://localhost:8876,https://ctrlcctrlvisthebest.github.io"
+  },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 }
+}

@@ -121,7 +121,7 @@ body {
   touch-action: none;
 }
 
-.canvas-stage { position: relative; }
+.canvas-stage { position: relative; aspect-ratio: 5 / 7; }
 
 .growth-control {
   position: absolute;
@@ -365,6 +365,70 @@ body {
   margin-top: 16px;
   padding: 7px 10px;
 }
+
+.scores-open,
+.score-history-footer button {
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid #777;
+  border-radius: 3px;
+  background: #171717;
+  color: #fff;
+  font: bold 10px/1 monospace;
+  cursor: pointer;
+}
+
+.scores-open {
+  position: fixed;
+  z-index: 21;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: max(10px, env(safe-area-inset-left));
+}
+
+.score-history {
+  width: min(560px, calc(100% - 24px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 18px;
+  border: 1px solid #777;
+  background: #111;
+  color: #fff;
+  overflow-y: auto;
+}
+
+.score-history::backdrop { background: rgb(0 0 0 / 88%); }
+.score-history-note { margin: 12px 0; color: #aaa; font: 11px/1.5 Arial, sans-serif; }
+.score-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; }
+.score-summary div { color: #aaa; font: 11px/1.3 Arial, sans-serif; }
+.score-summary strong { display: block; margin-top: 5px; color: #ffc247; font: bold 22px/1.2 monospace; overflow-wrap: anywhere; }
+.score-table-wrap { overflow-x: auto; }
+.score-history table { width: 100%; border-collapse: collapse; font: 11px/1.4 Arial, sans-serif; }
+.score-history caption { text-align: left; }
+.score-history th, .score-history td { padding: 9px 5px; text-align: left; border-bottom: 1px solid #333; }
+.score-history th { color: #aaa; font-weight: normal; }
+.score-history td:nth-child(2) { color: #ffc247; font-weight: bold; font-variant-numeric: tabular-nums; }
+.score-history-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+.score-history-footer nav { display: flex; align-items: center; gap: 10px; font: 11px/1 monospace; }
+.score-history-footer button:disabled { opacity: .35; cursor: default; }
+.score-history button:focus-visible, .scores-open:focus-visible { outline: 2px solid #ffc247; outline-offset: 3px; }
+
+.player-name-field { display: grid; gap: 6px; max-width: 260px; margin: 18px auto 0; color: #bbb; text-align: left; font: 11px/1.4 Arial, sans-serif; }
+.player-name-field input { width: 100%; min-height: 34px; padding: 7px 10px; border: 1px solid #666; border-radius: 3px; background: #171717; color: #fff; font: 13px/1.3 monospace; }
+.player-name-field input:focus-visible { outline: 2px solid #ffc247; outline-offset: 2px; }
+.leaderboard-sharing-note { max-width: 330px; margin: 8px auto 14px; color: #999; font: 10px/1.4 Arial, sans-serif; }
+.global-leaderboard { padding: 16px 0 20px; border-bottom: 1px solid #444; }
+.leaderboard-heading { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.leaderboard-heading h3 { margin: 0 auto 0 0; font: bold 16px/1.3 monospace; }
+.leaderboard-heading select, .leaderboard-heading button { min-height: 32px; padding: 5px 7px; border: 1px solid #666; border-radius: 3px; color: #ddd; background: #222; font: 11px/1.3 Arial, sans-serif; }
+.leaderboard-list { display: grid; gap: 8px; padding: 0; margin: 16px 0; list-style: none; }
+.leaderboard-list li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 10px; border: 1px solid #444; background: #181818; }
+.leaderboard-list li:first-child { border-color: #b28c35; }
+.leaderboard-rank { color: #888; font: bold 18px/1 monospace; }
+.leaderboard-list li:first-child .leaderboard-rank, .leaderboard-points { color: #ffc247; }
+.leaderboard-list strong { font: bold 15px/1.3 monospace; overflow-wrap: anywhere; }
+.leaderboard-list small { display: block; margin-top: 4px; color: #999; font: 10px/1.3 Arial, sans-serif; }
+.global-leaderboard .player-name-field { max-width: none; margin-top: 14px; }
+.local-history-title { margin: 20px 0 0; color: #bbb; font: bold 13px/1.3 monospace; }
 
 .keybindings-panel {
   position: fixed;

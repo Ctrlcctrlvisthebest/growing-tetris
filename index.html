@@ -7,7 +7,10 @@
     <meta name="description" content="A Tetris game where falling pieces keep growing." />
     <title>Growing Tetris</title>
     <link rel="stylesheet" href="style.css" />
-    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.10/lib/p5.min.js"></script>
+    <script src="renderer.js" defer></script>
+    <script src="leaderboard-config.js" defer></script>
+    <script src="leaderboard.js" defer></script>
+    <script src="score-history.js" defer></script>
     <script src="sketch.js" defer></script>
   </head>
   <body>
@@ -16,6 +19,10 @@
         <div class="start-card">
           <p class="start-kicker">A TETRIS GAME THAT NEVER STOPS CHANGING</p>
           <h1 id="start-title">GROWING<br />TETRIS</h1>
+          <label class="player-name-field" for="start-player-name">Leaderboard nickname
+            <input id="start-player-name" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" />
+          </label>
+          <p class="leaderboard-sharing-note">Your nickname and finished score join the global leaderboard. Full history stays on this device.</p>
           <p class="start-prompt desktop-start">PRESS <span data-key-action="drop">SPACE</span> TO START</p>
           <p class="start-prompt touch-start">TAP ANYWHERE TO START</p>
           <p id="start-description" class="start-description">
@@ -44,6 +51,7 @@
           </div>
 
           <button class="start-keybindings" data-open-keybindings type="button">KEY SETTINGS</button>
+          <button class="start-keybindings" data-open-scores type="button" aria-haspopup="dialog" aria-controls="score-history">SCORE HISTORY</button>
 
         </div>
       </section>
@@ -99,10 +107,56 @@
         KEY SETTINGS
       </button>
       <button id="music-toggle" class="music-toggle" type="button" aria-pressed="true">♪ MUSIC ON</button>
+      <button class="scores-open" data-open-scores type="button" aria-haspopup="dialog" aria-controls="score-history">SCORES</button>
+      <dialog id="score-history" class="score-history" aria-labelledby="score-history-title" aria-describedby="score-storage-status">
+        <div class="keybindings-header">
+          <h2 id="score-history-title">SCORE HISTORY</h2>
+          <button id="score-history-close" type="button" aria-label="Close score history" autofocus>×</button>
+        </div>
+        <section class="global-leaderboard" aria-labelledby="global-leaderboard-title">
+          <div class="leaderboard-heading">
+            <h3 id="global-leaderboard-title">GLOBAL TOP 3</h3>
+            <select id="global-leaderboard-mode" aria-label="Leaderboard mode">
+              <option value="all">All modes</option>
+              <option value="normal">Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+            <button id="global-leaderboard-refresh" type="button">Refresh</button>
+          </div>
+          <p id="global-leaderboard-status" class="score-history-note" role="status">Open Scores to load the global leaderboard.</p>
+          <ol id="global-top-three" class="leaderboard-list" aria-label="Global top three scores"></ol>
+          <label class="player-name-field" for="scores-player-name">Nickname for your next game
+            <input id="scores-player-name" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" />
+          </label>
+        </section>
+        <h3 class="local-history-title">THIS DEVICE</h3>
+        <p id="score-storage-status" class="score-history-note" role="status"></p>
+        <div class="score-summary">
+          <div>Normal best<strong id="score-best-normal">0</strong></div>
+          <div>Hard best<strong id="score-best-hard">0</strong></div>
+          <div>Games<strong id="score-run-count">0</strong></div>
+        </div>
+        <p id="score-history-empty" class="score-history-note">No scores yet. Start a game to record your first score.</p>
+        <div class="score-table-wrap">
+          <table id="score-history-table" hidden>
+            <caption class="score-history-note">All games · newest first</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Score</th><th scope="col">Mode</th><th scope="col">Result</th></tr></thead>
+            <tbody id="score-history-rows"></tbody>
+          </table>
+        </div>
+        <div class="score-history-footer">
+          <button id="score-history-export" type="button" disabled>EXPORT CSV</button>
+          <nav aria-label="Score history pages">
+            <button id="score-history-previous" type="button" aria-label="Previous score page" disabled>←</button>
+            <span id="score-history-page" aria-live="polite">1 / 1</span>
+            <button id="score-history-next" type="button" aria-label="Next score page" disabled>→</button>
+          </nav>
+        </div>
+      </dialog>
       <audio
         id="background-music"
-        src="assets/audio/growing-tetris-a-natural-minor-fast.wav"
-        preload="auto"
+        src="assets/audio/growing-tetris-a-natural-minor-fast.m4a"
+        preload="none"
       ></audio>
       <section id="keybindings-panel" class="keybindings-panel" role="dialog" aria-modal="true" aria-labelledby="keybindings-title" hidden>
         <div class="keybindings-card">

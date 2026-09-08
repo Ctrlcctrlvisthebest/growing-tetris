@@ -12,6 +12,7 @@ const HORIZONTAL_REPEAT_MS = 70;
 const SOFT_DROP_HOLD_DELAY_MS = 60;
 const SOFT_DROP_REPEAT_MS = 45;
 const MAX_FRAME_ELAPSED_MS = 100;
+const FRAME_INTERVAL_MS = 1000 / 60;
 const FREEZE_DURATION_MS = 8_000;
 const GROWTH_WARNING_FRAMES = 45;
 const PIECES_PER_SPEED_LEVEL = 5;
@@ -27,10 +28,10 @@ const HIGH_GROWTH_MUSIC_INTERVAL_FRAMES = 150;
 const OPENING_MUSIC_TRACK_ID = 'opening';
 const HIGH_GROWTH_MUSIC_TRACK_ID = 'arcade-rush';
 const MUSIC_TRACKS = Object.freeze({
-  opening: 'assets/audio/growing-tetris-a-natural-minor-fast.wav',
-  'syncopated-a-minor': 'assets/audio/groove-01-syncopated-a-minor-v2.wav',
-  'heavy-break-d-minor': 'assets/audio/groove-02-heavy-break-d-minor-v2.wav',
-  'arcade-rush': 'assets/audio/groove-03-arcade-rush-e-minor.wav',
+  opening: 'assets/audio/growing-tetris-a-natural-minor-fast.m4a',
+  'syncopated-a-minor': 'assets/audio/groove-01-syncopated-a-minor-v2.m4a',
+  'heavy-break-d-minor': 'assets/audio/groove-02-heavy-break-d-minor-v2.m4a',
+  'arcade-rush': 'assets/audio/groove-03-arcade-rush-e-minor.m4a',
 });
 const DEFAULT_KEY_BINDINGS = Object.freeze({
   left: 'ArrowLeft',
@@ -156,13 +157,14 @@ let musicEnabled = true;
 let musicControlsBound = false;
 let currentMusicTrackId = OPENING_MUSIC_TRACK_ID;
 const heldActions = new Set();
+let gameCanvas = null;
+let animationRequest = null;
+let lastFrameTime = null;
+let nextFrameTime = null;
 
-/** 初始化游戏画布、页面控件和第一局游戏；由绘图库在页面加载后调用一次。 */
+/** DOM 就绪后创建画布和控件；不等待音乐或外部绘图库。 */
 function setup() {
-  const canvas = createCanvas(500, 700);
-  canvas.parent('game-canvas');
-  frameRate(60);
-  textFont('monospace');
+  gameCanvas = createGameCanvas();
   cacheControls();
   initializeMusicControls();
   bindGrowthControls();
@@ -170,6 +172,56 @@ function setup() {
   bindTouchControls();
   bindStartScreen();
   initializeKeybindingControls();
+  initializeScoreHistory();
+  initializeGlobalLeaderboard();
+  window.addEventListener('keydown', (event) => {
+    if (keyPressed(event) === false) event.preventDefault();
+  });
+  window.addEventListener('keyup', (event) => {
+    if (keyReleased(event) === false) event.preventDefault();
+  });
+  window.addEventListener('blur', resetInputTimers);
+  window.addEventListener('resize', syncGameLoop);
+  document.addEventListener('visibilitychange', () => {
+    resetInputTimers();
+    syncGameLoop();
+  });
+  syncGameLoop();
+}
+
+/** 空闲时只绘制一次；恢复时丢弃后台时间，避免补算下落或卡住长按。 */
+function syncGameLoop() {
+  if (!gameCanvas) return;
+  if (animationRequest !== null) cancelAnimationFrame(animationRequest);
+  animationRequest = null;
+  lastFrameTime = null;
+  nextFrameTime = null;
+  if (!document.hidden) animationRequest = requestAnimationFrame(renderGameFrame);
+}
+
+function shouldAnimateGame() {
+  return gameStarted && !gamePaused && !controlsSuspended && !document.hidden
+    && (!gameOver || lineClearNotice?.framesRemaining > 0);
+}
+
+/** 高刷新率屏幕也维持原有 60 帧规则；使用时间戳避免帧率漂移。 */
+function renderGameFrame(timestamp) {
+  animationRequest = null;
+  if (document.hidden) return;
+  if (nextFrameTime === null || timestamp >= nextFrameTime - 0.5) {
+    const elapsedMs = lastFrameTime === null ? 0 : timestamp - lastFrameTime;
+    lastFrameTime = timestamp;
+    nextFrameTime = nextFrameTime === null
+      ? timestamp + FRAME_INTERVAL_MS
+      : nextFrameTime + FRAME_INTERVAL_MS;
+    if (nextFrameTime <= timestamp) nextFrameTime = timestamp + FRAME_INTERVAL_MS;
+    frameCount += 1;
+    draw(elapsedMs);
+  }
+  // State transitions inside draw() may already have scheduled the next frame.
+  if (shouldAnimateGame() && animationRequest === null) {
+    animationRequest = requestAnimationFrame(renderGameFrame);
+  }
 }
 
 /** 将外部计时值限制为非负有限数，防止异常帧时间污染所有计时器。 */
@@ -179,18 +231,11 @@ function normalizeElapsedMs(elapsedMs) {
 
 /**
  * 渲染并推进一帧游戏。
- * 暂停、结束或尚未开始时仍绘制界面，但不会更新输入、下落和生长状态。
+ * 先更新状态再渲染，输入、生长和落地结果在同一帧显示。
  */
-function draw() {
-  background(0);
-  board.draw();
-  if (!gameOver) {
-    currentPiece.drawLandingPreview();
-    currentPiece.draw();
-  }
-
+function draw(frameElapsedMs = 0) {
   if (gameStarted && !gameOver && !gamePaused && !controlsSuspended) {
-    const elapsedMs = Math.min(normalizeElapsedMs(deltaTime), MAX_FRAME_ELAPSED_MS);
+    const elapsedMs = Math.min(normalizeElapsedMs(frameElapsedMs), MAX_FRAME_ELAPSED_MS);
     handleHeldKeys(elapsedMs);
     if (isGrowthFrozen()) {
       updateFreezeTimer(elapsedMs);
@@ -206,6 +251,12 @@ function draw() {
     if (lineClearNotice.framesRemaining <= 0) lineClearNotice = null;
   }
 
+  background(0);
+  board.draw();
+  if (!gameOver) {
+    currentPiece.drawLandingPreview();
+    currentPiece.draw();
+  }
   drawInterface();
 }
 
@@ -213,19 +264,32 @@ class Board {
   /** 创建一个 20×10 的空棋盘；空值表示空格，颜色字符串表示已锁定方块。 */
   constructor() {
     this.grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    this.revision = 0;
+    this.renderedRevision = -1;
+    this.layer = null;
   }
 
-  /** 逐格绘制棋盘，并用不同描边区分空格和已锁定格。 */
+  /** 棋盘改变时重建缓存；普通帧只复制一次图像，保留边缘描边。 */
   draw() {
-    for (let row = 0; row < ROWS; row += 1) {
-      for (let col = 0; col < COLS; col += 1) {
-        const value = this.grid[row][col];
-        fill(value || 20);
-        stroke(value ? 0 : 200);
-        strokeWeight(1);
-        rect(BOARD_X + col * CELL, BOARD_Y + row * CELL, CELL, CELL);
+    const layerWidth = COLS * CELL + 2;
+    const layerHeight = ROWS * CELL + 2;
+    if (!this.layer) this.layer = createCanvasLayer(layerWidth, layerHeight);
+    if (this.renderedRevision !== this.revision) {
+      const context = this.layer.getContext('2d');
+      context.clearRect(0, 0, layerWidth, layerHeight);
+      context.lineWidth = 1;
+      for (let row = 0; row < ROWS; row += 1) {
+        for (let col = 0; col < COLS; col += 1) {
+          const value = this.grid[row][col];
+          context.fillStyle = value || '#141414';
+          context.strokeStyle = value ? '#000' : '#c8c8c8';
+          context.fillRect(1 + col * CELL, 1 + row * CELL, CELL, CELL);
+          context.strokeRect(1 + col * CELL, 1 + row * CELL, CELL, CELL);
+        }
       }
+      this.renderedRevision = this.revision;
     }
+    drawLayer(this.layer, BOARD_X - 1, BOARD_Y - 1, layerWidth, layerHeight);
   }
 
   /**
@@ -248,6 +312,7 @@ class Board {
 
   /** 将活动方块写入棋盘网格，并返回是否有组成格锁定在棋盘顶部之外。 */
   lock(piece) {
+    this.revision += 1;
     let toppedOut = false;
     piece.shape.forEach(([dx, dy]) => {
       const col = piece.x + dx;
@@ -274,6 +339,7 @@ class Board {
         row += 1;
       }
     }
+    if (cleared > 0) this.revision += 1;
     return cleared;
   }
 }
@@ -298,8 +364,18 @@ class Piece {
 
   /** 模拟垂直下落直到下一格发生碰撞，返回幽灵落点的纵坐标。 */
   getLandingY() {
+    const cached = this.landingCache;
+    if (cached && cached.board === board && cached.revision === board.revision
+        && cached.x === this.x && cached.y === this.y
+        && cached.shape === this.shape && cached.length === this.shape.length) {
+      return cached.landingY;
+    }
     let landingY = this.y;
     while (board.isValid(this.x, landingY + 1, this.shape)) landingY += 1;
+    this.landingCache = {
+      board, revision: board.revision, x: this.x, y: this.y,
+      shape: this.shape, length: this.shape.length, landingY,
+    };
     return landingY;
   }
 
@@ -476,9 +552,8 @@ class Piece {
     this.revalidateWarning();
     if (!this.warning) return;
     const alpha = 70 + 120 * Math.abs(Math.sin(frameCount * 0.16));
-    const c = color(this.color);
-    c.setAlpha(alpha);
-    fill(c);
+    const rgb = parseInt(this.color.slice(1), 16);
+    fill(rgb >> 16, (rgb >> 8) & 255, rgb & 255, alpha);
     stroke(255, 235);
     strokeWeight(2);
     rect(BOARD_X + (this.x + this.warning[0]) * CELL, BOARD_Y + (this.y + this.warning[1]) * CELL, CELL, CELL);
@@ -544,6 +619,7 @@ function lockAndSpawn() {
   const lines = board.clearLines();
   const lineClearScore = lines * lines * 100;
   score += lineClearScore;
+  saveScoreProgress();
   if (lines > 0) showLineClearNotice(lines, lineClearScore);
   freezeItems += lines;
   if (lines > 0) updateFreezeButton();
@@ -664,7 +740,8 @@ function showLineClearNotice(lines, points) {
 }
 
 /** 清空所有单局状态并创建全新棋盘，同时保留当前普通/困难模式选择。 */
-function restartGame() {
+function restartGame(reason = 'restarted') {
+  saveScoreProgress(reason);
   board = new Board();
   nextQueue = [];
   pieceGenerationHistory = [];
@@ -686,6 +763,7 @@ function restartGame() {
   freezeRemainingMs = 0;
   fillNextQueue();
   currentPiece = takeNextPiece();
+  if (gameStarted) beginScoreRun();
   updateControlStates();
   resetBackgroundMusicForGame();
 }
@@ -693,6 +771,7 @@ function restartGame() {
 /** 标记游戏结束并同步所有会受结束状态影响的按钮。 */
 function endGame() {
   gameOver = true;
+  saveScoreProgress('completed');
   updateControlStates();
   syncBackgroundMusic();
 }
@@ -702,6 +781,7 @@ function updateControlStates() {
   updateModeButton();
   updateFreezeButton();
   updatePauseButton();
+  syncGameLoop();
 }
 
 /** 缓存页面控件节点，避免在每一帧反复查询页面结构。 */
@@ -965,6 +1045,7 @@ function openKeybindingsPanel(trigger = null) {
   renderKeybindingsList();
   keybindingsCloseButton?.focus();
   syncBackgroundMusic();
+  syncGameLoop();
 }
 
 /** 关闭键位设置、取消等待输入并恢复游戏状态更新。 */
@@ -976,6 +1057,7 @@ function closeKeybindingsPanel() {
   resetInputTimers();
   lastKeybindingsTrigger?.focus();
   syncBackgroundMusic();
+  syncGameLoop();
 }
 
 /** 进入指定动作的按键捕获状态。 */
@@ -1047,6 +1129,7 @@ function handleKeybindingPointerDown(event) {
 
 /** 在事件捕获阶段接收改键输入，防止按键继续触发绘图库的游戏操作。 */
 function handleKeybindingKeyDown(event) {
+  if (scoreHistoryDialog?.open) return;
   if (bindingCaptureAction) {
     event.preventDefault();
     event.stopPropagation();
@@ -1070,6 +1153,7 @@ function bindKeybindingControls() {
 function startGame() {
   if (gameStarted) return;
   gameStarted = true;
+  beginScoreRun();
   fallElapsedMs = 0;
   resetInputTimers();
   currentPiece.growthCounter = 0;
@@ -1078,6 +1162,7 @@ function startGame() {
     startScreen.setAttribute('aria-hidden', 'true');
   }
   syncBackgroundMusic();
+  syncGameLoop();
 }
 
 /** 为触屏设备绑定点击开始；桌面端继续使用空格键开始。 */
@@ -1151,7 +1236,7 @@ function bindGrowthControls() {
 /** 在普通与困难模式之间切换，并按新模式重新开局。 */
 function handleModeRequest() {
   hardMode = !hardMode;
-  restartGame();
+  restartGame('mode-change');
 }
 
 /** 切换暂停状态并同步输入计时器和相关按钮；未开始或已结束时拒绝操作。 */
@@ -1200,12 +1285,12 @@ function useFreezeItem() {
 /** 显示冻结道具数量或剩余时间，并根据游戏状态决定按钮是否可用。 */
 function updateFreezeButton() {
   if (!freezeButton) return;
-  if (isGrowthFrozen()) {
-    freezeButton.textContent = `FROZEN ${(freezeRemainingMs / 1000).toFixed(1)}s`;
-  } else {
-    freezeButton.textContent = `FREEZE ×${freezeItems}`;
-  }
-  freezeButton.disabled = gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen();
+  const label = isGrowthFrozen()
+    ? `FROZEN ${(freezeRemainingMs / 1000).toFixed(1)}s`
+    : `FREEZE ×${freezeItems}`;
+  const disabled = gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen();
+  if (freezeButton.textContent !== label) freezeButton.textContent = label;
+  if (freezeButton.disabled !== disabled) freezeButton.disabled = disabled;
 }
 
 /**
@@ -1307,7 +1392,8 @@ function drawInterface() {
     noStroke(); fill(150); textSize(10); text('USED', 20, 165);
   }
   noStroke();
-  fill(isGrowthFrozen() ? color(80, 190, 255) : 180);
+  if (isGrowthFrozen()) fill(80, 190, 255);
+  else fill(180);
   textSize(11);
   text(isGrowthFrozen() ? `Frozen ${(freezeRemainingMs / 1000).toFixed(1)}s` : `Freeze ×${freezeItems}`, 20, 205);
 
@@ -1404,6 +1490,7 @@ function drawMiniShape(shape, shapeColor, x, y, size) {
   const minX = Math.min(...shape.map(([dx]) => dx));
   const minY = Math.min(...shape.map(([, dy]) => dy));
   fill(shapeColor);
+  strokeWeight(1);
   shape.forEach(([dx, dy]) => {
     stroke(50);
     rect(x + (dx - minX) * size, y + (dy - minY) * size, size, size);
@@ -1509,6 +1596,9 @@ function handleHeldKeys(elapsedMs) {
 
 /** 绘图库的键盘按下入口：处理开始、模式、暂停、道具以及所有方块操作。 */
 function keyPressed(event) {
+  if (event?.target?.matches?.('input[type="text"], textarea') || event?.target?.isContentEditable) return undefined;
+  if (scoreHistoryDialog?.open) return undefined;
+  if (event?.target?.closest?.('[data-open-scores]') && ['Space', 'Enter'].includes(event.code)) return undefined;
   if (handleKeyCapture(event)) return false;
   if (controlsSuspended) {
     if (event?.code === 'Escape') closeKeybindingsPanel();
@@ -1540,6 +1630,9 @@ function keyPressed(event) {
 
 /** 绘图库的键盘松开入口：结束方向键长按并清空重复计时。 */
 function keyReleased(event) {
+  if (event?.target?.matches?.('input[type="text"], textarea') || event?.target?.isContentEditable) return undefined;
+  if (scoreHistoryDialog?.open) return undefined;
+  if (event?.target?.closest?.('[data-open-scores]') && ['Space', 'Enter'].includes(event.code)) return undefined;
   const action = getActionForCode(event?.code);
   if (!action) return undefined;
   heldActions.delete(action);
@@ -1556,4 +1649,8 @@ function bindTouchControls() {
       executeGameAction(button.dataset.action);
     });
   });
+}
+
+if (typeof document.addEventListener === 'function') {
+  document.addEventListener('DOMContentLoaded', setup, { once: true });
 }
