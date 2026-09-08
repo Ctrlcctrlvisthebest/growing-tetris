@@ -11,7 +11,7 @@ body {
   place-items: start center;
   color: #fff;
   font-family: Arial, sans-serif;
-  overscroll-behavior: none;
+  overscroll-behavior-y: contain;
 }
 
 .game-shell {
@@ -118,7 +118,7 @@ body {
   display: block;
   width: min(100%, 500px) !important;
   height: auto !important;
-  touch-action: none;
+  touch-action: pan-y pinch-zoom;
 }
 
 .canvas-stage { position: relative; aspect-ratio: 5 / 7; }
@@ -578,15 +578,63 @@ body {
   .game-guide { padding: 8px 10px; font-size: 10px; }
   .touch-controls { display: grid; }
   .desktop-controls { display: none; }
-  .keybindings-open {
-    top: auto;
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
+  /* Keep auxiliary buttons in the page flow so they cannot cover touch controls. */
+  .keybindings-open, .music-toggle, .scores-open, .feedback-button {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 6px 3px;
+    min-height: 36px;
+    vertical-align: middle;
   }
-  .music-toggle {
-    top: auto;
-    right: calc(max(10px, env(safe-area-inset-right)) + 102px);
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
-    min-height: 26px;
-  }
+  .game-shell { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
   .feedback-button { min-height: 36px; padding: 8px 10px; }
+  .feedback-tooltip { display: none; }
+}
+
+/* Native scroll on touch surfaces; no global preventDefault or pinch-zoom suppression. */
+.start-screen, .keybindings-panel, .score-history, .score-table-wrap {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+button, .touch-controls, .feedback-button { touch-action: manipulation; }
+.touch-controls, #game-canvas { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.growth-control input { touch-action: pan-y; }
+.start-game-button {
+  display: block; margin: 14px auto 0; min-height: 44px; padding: 10px 22px;
+  border: 1px solid #5be078; border-radius: 4px; color: #000; background: #5be078;
+  font: bold 13px/1.4 monospace; cursor: pointer;
+}
+.nickname-status { min-height: 1.5em; margin: 7px 0; color: #aab3b0; font: 12px/1.5 Arial, sans-serif; }
+.nickname-status[data-state="blocked"], [data-player-name][aria-invalid="true"] { color: #ff8795; }
+[data-player-name][aria-invalid="true"] { border-color: #ff8795; }
+.nickname-status[data-state="allowed"] { color: #83e99a; }
+.touch-gesture-guide { display: none; }
+@media (pointer: coarse), (max-width: 560px) {
+  .touch-gesture-guide { display: block; margin: 6px 8px; color: #bbb; font: 11px/1.5 Arial, sans-serif; text-align: center; }
+  .player-name-field input { font-size: 16px; }
+  .start-screen { cursor: auto; }
+}
+
+.board-gesture-surface { display: none; }
+.language-choice { display: inline-flex; align-items: center; gap: 6px; color: #ccc; font: 12px/1.4 Arial, sans-serif; }
+.language-choice select { min-height: 36px; color: #fff; background: #171717; border: 1px solid #777; border-radius: 4px; padding: 5px 7px; font: inherit; touch-action: manipulation; }
+.language-choice select:focus-visible { outline: 2px solid #5be078; outline-offset: 2px; }
+.start-card > .language-choice { margin-bottom: 12px; }
+.language-switcher { position: fixed; top: 10px; left: 10px; z-index: 4; }
+.keybindings-header { flex-wrap: wrap; gap: 8px; }
+@media (pointer: coarse), (max-width: 560px) {
+  .language-switcher { position: static; margin: 4px; }
+  .language-choice select { font-size: 16px; min-height: 44px; }
+}
+@media (pointer: coarse), (max-width: 560px) {
+  .board-gesture-surface {
+    display: block; position: absolute; left: 20%; top: 7.142857%;
+    width: 60%; height: 85.714286%; z-index: 1;
+    touch-action: none; pointer-events: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  .board-gesture-surface.is-active { pointer-events: auto; }
+  .start-tips .touch-gesture-guide { margin: 0; text-align: left; }
 }

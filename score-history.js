@@ -26,7 +26,7 @@ function beginScoreRun() {
     ?? `${now}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
   activeScoreRecord = {
     id, score: 0, mode: hardMode ? 'hard' : 'normal',
-    playerName: typeof currentPlayerName === 'function' ? currentPlayerName() : 'Player',
+    playerName: typeof scorePlayerName === 'function' ? scorePlayerName() : 'Player',
     startedAt: now, updatedAt: now, status: 'playing',
   };
   persistScoreRecord(activeScoreRecord);
@@ -81,9 +81,9 @@ function readScoreRecords() {
 
 function scoreRecordStatus(record) {
   if (record.status === 'playing') {
-    return record.id === activeScoreRecord?.id ? 'In progress' : 'Unfinished';
+    return t(record.id === activeScoreRecord?.id ? 'In progress' : 'Unfinished');
   }
-  return { completed: 'Game over', restarted: 'Restarted', 'mode-change': 'Mode changed' }[record.status];
+  return t({ completed: 'Game over', restarted: 'Restarted', 'mode-change': 'Mode changed' }[record.status]);
 }
 
 function renderScoreHistory() {
@@ -93,22 +93,22 @@ function renderScoreHistory() {
   scoreHistoryPage = Math.min(scoreHistoryPage, pageCount - 1);
   const best = { normal: 0, hard: 0 };
   for (const record of records) best[record.mode] = Math.max(best[record.mode], record.score);
-  document.querySelector('#score-best-normal').textContent = best.normal.toLocaleString();
-  document.querySelector('#score-best-hard').textContent = best.hard.toLocaleString();
-  document.querySelector('#score-run-count').textContent = records.length.toLocaleString();
-  document.querySelector('#score-storage-status').textContent = scoreStorageReadFailed || unsavedScoreRecords.size
+  setLocalizedText(document.querySelector('#score-best-normal'), best.normal.toLocaleString());
+  setLocalizedText(document.querySelector('#score-best-hard'), best.hard.toLocaleString());
+  setLocalizedText(document.querySelector('#score-run-count'), records.length.toLocaleString());
+  setLocalizedText(document.querySelector('#score-storage-status'), scoreStorageReadFailed || unsavedScoreRecords.size
     ? 'Some scores could not be saved to this browser. They are available in this session; export a copy to keep them.'
-    : 'Saved only in this browser. Clearing site data removes these scores. Export a copy to keep a backup.';
+    : 'Saved only in this browser. Clearing site data removes these scores. Export a copy to keep a backup.');
 
   const rows = document.querySelector('#score-history-rows');
   rows.replaceChildren();
   const start = scoreHistoryPage * SCORE_PAGE_SIZE;
   for (const record of records.slice(start, start + SCORE_PAGE_SIZE)) {
     const row = document.createElement('tr');
-    const date = new Date(record.startedAt).toLocaleString(undefined, {
+    const date = new Date(record.startedAt).toLocaleString(languageLocale(), {
       year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
     });
-    for (const value of [date, record.score.toLocaleString(), record.mode === 'hard' ? 'Hard' : 'Normal', scoreRecordStatus(record)]) {
+    for (const value of [date, record.score.toLocaleString(languageLocale()), t(record.mode === 'hard' ? 'Hard' : 'Normal'), scoreRecordStatus(record)]) {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.append(cell);
@@ -117,7 +117,7 @@ function renderScoreHistory() {
   }
   document.querySelector('#score-history-empty').hidden = records.length > 0;
   document.querySelector('#score-history-table').hidden = records.length === 0;
-  document.querySelector('#score-history-page').textContent = `${scoreHistoryPage + 1} / ${pageCount}`;
+  setLocalizedText(document.querySelector('#score-history-page'), `${scoreHistoryPage + 1} / ${pageCount}`);
   document.querySelector('#score-history-previous').disabled = scoreHistoryPage === 0;
   document.querySelector('#score-history-next').disabled = scoreHistoryPage >= pageCount - 1;
   document.querySelector('#score-history-export').disabled = records.length === 0;

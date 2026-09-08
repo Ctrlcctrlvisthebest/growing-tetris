@@ -22,7 +22,8 @@
     "simple": { "limit": 30, "period": 60 }
   }],
   "vars": {
-    "ALLOWED_ORIGINS": "http://127.0.0.1:8876,http://localhost:8876,https://ctrlcctrlvisthebest.github.io"
+    "ALLOWED_ORIGINS": "http://127.0.0.1:8876,http://localhost:8876,https://ctrlcctrlvisthebest.github.io,https://www.bilibilitoy.com",
+    "NICKNAME_BLOCKLIST": ""
   },
   "observability": { "enabled": true, "head_sampling_rate": 0.1 }
 }

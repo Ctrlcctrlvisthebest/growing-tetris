@@ -5,7 +5,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const sourcePath = path.join(__dirname, '..', 'sketch.js');
-const source = fs.readFileSync(path.join(__dirname, '..', 'leaderboard.js'), 'utf8') + '\n'
+const source = fs.readFileSync(path.join(__dirname, '..', 'i18n.js'), 'utf8') + '\n'
+  + fs.readFileSync(path.join(__dirname, '..', 'leaderboard.js'), 'utf8') + '\n'
   + fs.readFileSync(path.join(__dirname, '..', 'score-history.js'), 'utf8')
   + '\n' + fs.readFileSync(sourcePath, 'utf8');
 
@@ -50,6 +51,69 @@ function runGameAssertions(assertionSource, overrides = {}) {
 }
 
 // 验证多行消除会删除目标行并正确补充空行。
+test('语言默认值由发行版决定，手动选择优先且损坏存储会回退', () => {
+  for (const language of ['en', 'zh-CN']) {
+    for (const saved of [null, 'invalid']) {
+      runGameAssertions(`assert.equal(currentLanguage, '${language}');`, {
+        window: { GROWING_TETRIS_DEFAULT_LANGUAGE: language, localStorage: { getItem: () => saved } },
+      });
+    }
+    runGameAssertions(`assert.equal(currentLanguage, 'en');`, {
+      window: { GROWING_TETRIS_DEFAULT_LANGUAGE: language, localStorage: { getItem: () => 'en' } },
+    });
+    runGameAssertions(`assert.equal(currentLanguage, '${language}');`, {
+      window: { GROWING_TETRIS_DEFAULT_LANGUAGE: language, localStorage: { getItem() { throw Error('blocked'); } } },
+    });
+  }
+});
+
+test('切换语言更新动态提示和画布，不重开对局或推进生长计时', () => {
+  runGameAssertions(`
+    document.documentElement = {};
+    board = new Board(); currentPiece = new Piece('T'); gameCanvas = {};
+    board.draw = currentPiece.draw = currentPiece.drawLandingPreview = background = () => {};
+    let canvasLabel;
+    drawInterface = () => { canvasLabel = t('Score: 123'); };
+    currentPiece.growthElapsedMs = 425;
+    fallElapsedMs = 321; freezeRemainingMs = 2500; hardOperationCount = 7;
+    speedUpNoticeFrames = 60; lineClearNotice = { framesRemaining: 40 };
+    gameStarted = true; gamePaused = true; score = 123;
+    activeScoreRecord = { id: 'language-test', score: 123, playerName: 'Normal' };
+    const run = activeScoreRecord, piece = currentPiece;
+    const feedback = { isConnected: true };
+    setLocalizedText(feedback, 'Nickname approved. Press Start to play.');
+    setLanguage('zh-CN');
+    assert.equal(feedback.textContent, '昵称可用，点击开始即可游玩。');
+    assert.equal(canvasLabel, '分数：123');
+    assert.equal(t('FROZEN 7.9s'), '冻结中 7.9秒');
+    assert.equal(t('Growth Lv: 99'), '生长等级：99');
+    assert.equal(window.localStorage.getItem(LANGUAGE_STORAGE_KEY), 'zh-CN');
+    assert.equal(document.documentElement.lang, 'zh-CN');
+    assert.equal(activeScoreRecord, run); assert.equal(currentPiece, piece);
+    assert.equal(run.playerName, 'Normal'); assert.equal(score, 123);
+    assert.equal(currentPiece.growthElapsedMs, 425); assert.equal(fallElapsedMs, 321);
+    assert.equal(freezeRemainingMs, 2500); assert.equal(hardOperationCount, 7);
+    assert.equal(speedUpNoticeFrames, 60); assert.equal(lineClearNotice.framesRemaining, 40);
+    assert.equal(gamePaused, true);
+    setLanguage('en');
+    assert.equal(feedback.textContent, 'Nickname approved. Press Start to play.');
+    assert.equal(canvasLabel, 'Score: 123');
+    assert.equal(t('留空将以 Player 参加排行榜。'), 'Leave blank to join the leaderboard as Player.');
+    setLanguage('unexpected'); assert.equal(currentLanguage, 'en');
+  `);
+});
+
+test('语言选择框的方向键不会移动棋盘方块', () => {
+  runGameAssertions(`
+    gameStarted = true; board = new Board(); currentPiece = new Piece('T');
+    const x = currentPiece.x;
+    const event = { code: 'ArrowLeft', target: { matches: selector => selector.includes('select') } };
+    keyPressed(event); keyReleased(event);
+    assert.equal(currentPiece.x, x);
+    assert.equal(heldActions.size, 0);
+  `);
+});
+
 test('同时消除多行', () => {
   runGameAssertions(`
     board = new Board();
@@ -622,6 +686,109 @@ test('60 Hz 和 120 Hz 屏幕每秒执行相同次数的游戏更新', () => {
   `);
 });
 
+// Exercise the real scheduler and draw/update path; only painting and falling are isolated.
+const growthTimingSetup = `
+  const pending = new Map();
+  let requestId = 0;
+  requestAnimationFrame = callback => { pending.set(++requestId, callback); return requestId; };
+  cancelAnimationFrame = id => pending.delete(id);
+  frameCount = 0;
+  gameCanvas = {};
+  gameStarted = true;
+  board = new Board();
+  currentPiece = new Piece('T');
+  board.draw = currentPiece.draw = currentPiece.drawLandingPreview = () => {};
+  background = drawInterface = updateFalling = () => {};
+  function tick(time) {
+    const callbacks = [...pending.values()];
+    pending.clear();
+    callbacks.forEach(callback => callback(time));
+  }
+  syncGameLoop();
+`;
+
+test('99 级的增长与预警在 10–144 Hz 下遵守相同真实时间，不再因低帧率变慢', () => {
+  for (const rate of [10, 15, 24, 30, 60, 90, 120, 144]) {
+    runGameAssertions(growthTimingSetup + `
+      piecesLocked = 490;
+      growthSpeed = 3;
+      let warningAt = null;
+      const growthTimes = [];
+      let size = currentPiece.shape.length;
+      for (let frame = 0; frame <= ${rate} * 3; frame += 1) {
+        const time = frame * 1000 / ${rate};
+        tick(time);
+        if (currentPiece.warning && warningAt === null) warningAt = time;
+        if (currentPiece.shape.length > size) {
+          growthTimes.push(time);
+          size = currentPiece.shape.length;
+        }
+      }
+      assert.equal(growthTimes.length, 3, '${rate} Hz: three growths in three seconds');
+      const tolerance = 1000 / Math.min(${rate}, 60) + 0.01;
+      assert.ok(warningAt >= 250 && warningAt <= 250 + tolerance, 'warning precedes growth by 750ms');
+      growthTimes.forEach((time, i) => assert.ok(Math.abs(time - (i + 1) * 1000) <= tolerance));
+    `);
+  }
+});
+
+test('17 级在抖动帧间隔下仍为 1.1 秒一长，周期余量不会累计丢失', () => {
+  runGameAssertions(growthTimingSetup + `
+    piecesLocked = 80;
+    growthSpeed = 3;
+    const gaps = [7, 43, 18, 65, 29, 14, 81, 11];
+    let time = 0, index = 0;
+    tick(0);
+    while (time < 6600) {
+      time = Math.min(6600, time + gaps[index++ % gaps.length]);
+      tick(time);
+    }
+    assert.equal(currentPiece.shape.length, 10, 'six growths after 6.6 seconds');
+  `);
+});
+
+test('真实时间增长保留冻结结束的帧内余量，暂停与后台时间不补算', () => {
+  runGameAssertions(growthTimingSetup + `
+    piecesLocked = 490;
+    freezeRemainingMs = 150;
+    tick(0);
+    tick(100);
+    assert.equal(currentPiece.growthElapsedMs, 0);
+    tick(200);
+    assert.equal(freezeRemainingMs, 0);
+    assert.equal(currentPiece.growthElapsedMs, 50);
+    gamePaused = true;
+    syncGameLoop(); tick(10000);
+    assert.equal(currentPiece.growthElapsedMs, 50);
+    gamePaused = false;
+    document.hidden = true;
+    syncGameLoop(); tick(20000);
+    document.hidden = false;
+    syncGameLoop(); tick(30000);
+    assert.equal(currentPiece.growthElapsedMs, 50);
+    tick(30100);
+    assert.equal(currentPiece.growthElapsedMs, 150);
+    hardMode = true;
+    tick(30200);
+    assert.equal(currentPiece.growthElapsedMs, 150, 'hard mode stays operation-driven');
+  `);
+});
+
+test('增长计时拒绝异常时间，长卡顿和突然加速不引发连续爆长', () => {
+  runGameAssertions(`
+    board = new Board(); currentPiece = new Piece('T');
+    currentPiece.updateGrowth(NaN);
+    currentPiece.updateGrowth(Infinity);
+    currentPiece.updateGrowth(-100);
+    assert.equal(currentPiece.growthElapsedMs, 0);
+    currentPiece.growthElapsedMs = 3000;
+    piecesLocked = 490;
+    currentPiece.updateGrowth(10000);
+    assert.equal(currentPiece.shape.length, 5);
+    assert.ok(currentPiece.growthElapsedMs <= MAX_FRAME_ELAPSED_MS);
+  `);
+});
+
 test('单局成绩持续更新，结束、打开历史和重启不重复记录', () => {
   runGameAssertions(`
     restartGame();
@@ -762,6 +929,7 @@ test('CSV 导出包含所有分页中的成绩，且只创建本地下载', () =
 
 test('全球榜只提交新完成的对局，并使用开局时的昵称', () => {
   runGameAssertions(`
+    nicknameReview = { source: 'Alice', name: 'Alice', state: 'allowed' };
     const input = { value: '  Alice  ' };
     document.querySelector = (selector) => selector === '[data-player-name]' ? input : null;
     restartGame(); startGame();
@@ -844,5 +1012,138 @@ test('被拒绝的成绩不阻塞后续上传，限流时仍可读取排行榜',
       assert.equal(pendingGlobalScores.size, 1);
       assert.match(status.textContent, /Global scores loaded.*waiting to upload/);
     })();
+  `);
+});
+
+test('昵称审核过期响应不能覆盖新输入，未审核的昵称不进入新对局', async () => {
+  await runGameAssertions(`
+    (async () => {
+      const input = { value: 'Alice' };
+      document.querySelector = selector => selector === '[data-player-name]' ? input : null;
+      const replies = [];
+      fetch = () => new Promise(resolve => replies.push(resolve));
+      const alice = reviewCurrentNickname();
+      assert.equal(scorePlayerName(), 'Player');
+      input.value = 'Bob';
+      const bob = reviewCurrentNickname();
+      replies[1]({ ok: true, json: async () => ({ allowed: true, name: 'Bob' }) });
+      await bob;
+      replies[0]({ ok: true, json: async () => ({ allowed: false, message: 'blocked' }) });
+      await alice;
+      assert.equal(nicknameReview.source, 'Bob');
+      assert.equal(scorePlayerName(), 'Bob');
+      restartGame(); requestStartGame();
+      assert.equal(activeScoreRecord.playerName, 'Bob');
+    })();
+  `);
+});
+
+test('被拒绝昵称无法从开始按钮开局，断网仍可匿名玩', async () => {
+  await runGameAssertions(`
+    (async () => {
+      const input = { value: 'BlockedName' };
+      document.querySelector = selector => selector === '[data-player-name]' ? input : null;
+      fetch = async () => ({ ok: true, json: async () => ({ allowed: false, message: 'blocked' }) });
+      restartGame();
+      await reviewCurrentNickname(); requestStartGame();
+      assert.equal(gameStarted, false);
+      assert.equal(scorePlayerName(), 'Player');
+      input.value = 'OfflineName';
+      fetch = async () => { throw new Error('offline'); };
+      await reviewCurrentNickname(); requestStartGame();
+      assert.equal(gameStarted, true);
+      assert.equal(activeScoreRecord.playerName, 'Player');
+    })();
+  `);
+});
+
+test('昵称审核拒绝清除补传队列但保留本地成绩', async () => {
+  await runGameAssertions(`
+    (async () => {
+      restartGame(); startGame(); endGame();
+      fetch = async () => ({ ok: false, status: 422, json: async () => ({ code: 'nickname_not_allowed' }) });
+      await flushGlobalScores();
+      assert.equal(pendingGlobalScores.size, 0);
+      assert.equal(readScoreRecords().length, 1);
+      assert.equal(rejectedNicknameScore, true);
+    })();
+  `);
+});
+
+test('触屏按钮松开后才操作，拖动、取消及多指不会误触，键盘点击保留', () => {
+  runGameAssertions(`
+    const handlers = {};
+    const button = { disabled: false, addEventListener(name, callback) { handlers[name] = callback; } };
+    let actions = 0, prevented = 0;
+    bindTapControl(button, () => { actions += 1; });
+    const pointer = (x, y, id = 1) => ({ pointerId: id, clientX: x, clientY: y, button: 0, isPrimary: id === 1 });
+    const click = detail => handlers.click({ detail, preventDefault() { prevented += 1; } });
+    handlers.pointerdown(pointer(20, 20)); assert.equal(actions, 0);
+    handlers.pointerup(pointer(20, 20)); click(1); assert.equal(actions, 1);
+    handlers.pointerdown(pointer(20, 20)); handlers.pointermove(pointer(20, 60)); handlers.pointerup(pointer(20, 60)); click(1);
+    assert.equal(actions, 1);
+    handlers.pointerdown(pointer(20, 20)); handlers.pointercancel(); click(1); assert.equal(actions, 1);
+    handlers.pointerdown(pointer(20, 20)); handlers.pointerdown(pointer(20, 20, 2)); handlers.pointerup(pointer(20, 20)); click(1);
+    assert.equal(actions, 1);
+    click(0); assert.equal(actions, 2);
+    button.disabled = true; click(0); assert.equal(actions, 2);
+    assert.equal(prevented, 3);
+  `);
+});
+
+test('棋盘横滑每次手势仅算一次困难操作，短纵滑、多指和取消不误转', () => {
+  runGameAssertions(`
+    restartGame(); startGame(); hardMode = true; hardOperationCount = 0;
+    gameCanvas = { getBoundingClientRect: () => ({ width: 500, left: 0, top: 0 }), setPointerCapture() {} };
+    const p = (x, y, time = 0, id = 1) => ({ pointerType: 'touch', isPrimary: id === 1, pointerId: id, clientX: x, clientY: y, timeStamp: time, cancelable: true, preventDefault() {} });
+    const originalX = currentPiece.x;
+    beginBoardGesture(p(160, 100)); moveBoardGesture(p(225, 100, 100)); endBoardGesture(p(225, 100, 200));
+    assert.equal(currentPiece.x, originalX + 2); assert.equal(hardOperationCount, 1);
+    const rotation = currentPiece.rotationState;
+    beginBoardGesture(p(160, 100)); moveBoardGesture(p(165, 120, 100)); endBoardGesture(p(165, 120, 200));
+    assert.equal(currentPiece.rotationState, rotation); assert.equal(hardOperationCount, 1);
+    beginBoardGesture(p(160, 100)); beginBoardGesture(p(200, 100, 0, 2)); endBoardGesture(p(160, 100, 200));
+    assert.equal(currentPiece.rotationState, rotation);
+    beginBoardGesture(p(160, 100)); resetBoardGesture(); endBoardGesture(p(160, 100, 200));
+    assert.equal(currentPiece.rotationState, rotation);
+    beginBoardGesture(p(160, 100)); endBoardGesture(p(160, 100, 200));
+    assert.notEqual(currentPiece.rotationState, rotation);
+  `);
+});
+
+test('新方块、暂停或后台出现后，旧滑动手势不能继续移动', () => {
+  runGameAssertions(`
+    restartGame(); startGame();
+    gameCanvas = { getBoundingClientRect: () => ({ width: 390, left: 0, top: 0 }), setPointerCapture() {} };
+    const p = (x, y) => ({ pointerType: 'touch', pointerId: 1, clientX: x, clientY: y, timeStamp: 0 });
+    beginBoardGesture(p(150, 100)); currentPiece = new Piece('T');
+    const x = currentPiece.x;
+    moveBoardGesture(p(240, 100)); assert.equal(currentPiece.x, x);
+    beginBoardGesture(p(150, 100)); gamePaused = true; moveBoardGesture(p(240, 100)); assert.equal(currentPiece.x, x);
+    gamePaused = false; beginBoardGesture(p(150, 100)); document.hidden = true;
+    moveBoardGesture(p(240, 100)); assert.equal(currentPiece.x, x);
+  `);
+});
+
+
+test('棋盘上滑旋转、下滑松手后硬降，取消或斜滑不会误落块', () => {
+  runGameAssertions(`
+    restartGame(); startGame();
+    gameCanvas = { getBoundingClientRect: () => ({ width: 390, left: 0, top: 0 }), setPointerCapture() {} };
+    const actions = [];
+    executeGameAction = action => { actions.push(action); return true; };
+    const p = (x, y, time = 0) => ({ pointerType: 'touch', pointerId: 1, clientX: x, clientY: y, timeStamp: time, cancelable: true, preventDefault() {} });
+    beginBoardGesture(p(150, 170)); moveBoardGesture(p(150, 120, 100));
+    assert.equal(actions.length, 0); endBoardGesture(p(150, 120, 200));
+    assert.deepEqual(actions, ['rotate']);
+    beginBoardGesture(p(150, 100)); moveBoardGesture(p(150, 165, 100));
+    assert.equal(actions.length, 1); endBoardGesture(p(150, 165, 200));
+    assert.deepEqual(actions, ['rotate', 'drop']);
+    beginBoardGesture(p(150, 100)); moveBoardGesture(p(150, 165, 100)); resetBoardGesture(); endBoardGesture(p(150, 165, 200));
+    assert.equal(actions.length, 2);
+    beginBoardGesture(p(150, 100)); endBoardGesture(p(160, 130, 200));
+    assert.equal(actions.length, 2, 'short downward motion does not hard drop');
+    beginBoardGesture(p(150, 100)); endBoardGesture(p(200, 150, 200));
+    assert.equal(actions.length, 2, 'ambiguous diagonal does not commit');
   `);
 });

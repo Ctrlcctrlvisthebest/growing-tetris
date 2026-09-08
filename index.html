@@ -8,6 +8,8 @@
     <title>Growing Tetris</title>
     <link rel="stylesheet" href="style.css" />
     <script src="renderer.js" defer></script>
+    <script src="locale-config.js" defer></script>
+    <script src="i18n.js" defer></script>
     <script src="leaderboard-config.js" defer></script>
     <script src="leaderboard.js" defer></script>
     <script src="score-history.js" defer></script>
@@ -17,19 +19,23 @@
     <main class="game-shell" aria-label="Growing Tetris game">
       <section id="start-screen" class="start-screen" aria-labelledby="start-title" aria-describedby="start-description">
         <div class="start-card">
+          <label class="language-choice">Language <select data-language-select aria-label="Language"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
           <p class="start-kicker">A TETRIS GAME THAT NEVER STOPS CHANGING</p>
           <h1 id="start-title">GROWING<br />TETRIS</h1>
           <label class="player-name-field" for="start-player-name">Leaderboard nickname
-            <input id="start-player-name" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" />
+            <input id="start-player-name" aria-describedby="start-nickname-status" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" autocapitalize="off" spellcheck="false" />
           </label>
+          <p id="start-nickname-status" data-nickname-status class="nickname-status" role="status">留空将以 Player 参加排行榜。</p>
           <p class="leaderboard-sharing-note">Your nickname and finished score join the global leaderboard. Full history stays on this device.</p>
           <p class="start-prompt desktop-start">PRESS <span data-key-action="drop">SPACE</span> TO START</p>
-          <p class="start-prompt touch-start">TAP ANYWHERE TO START</p>
+          <p class="start-prompt touch-start">TAP START GAME TO PLAY</p>
+          <button type="button" class="start-game-button" data-start-game>START GAME · 开始游戏</button>
           <p id="start-description" class="start-description">
             Falling pieces grow while you play. A flashing cell shows where the next block will appear—move and rotate before it grows.
           </p>
 
           <div class="start-tips" aria-label="How to play">
+            <p class="touch-gesture-guide"><strong>触屏操作</strong> 棋盘左右滑动移动，上滑旋转，下滑直接落下。棋盘外滑动可滚动页面。</p>
             <p><strong>LANDING GUIDE</strong> The thick gray outline shows where the current piece will land.</p>
             <p><strong>LINES &amp; FREEZE</strong> Clear each line to earn 1 Freeze. Use it to stop all growth for 8 seconds.</p>
             <p><strong>GROWTH SPEED</strong> Adjust the slider during Normal mode. The game also speeds up as you progress.</p>
@@ -58,6 +64,7 @@
 
       <div class="canvas-stage">
         <div id="game-canvas"></div>
+        <div class="board-gesture-surface" aria-hidden="true"></div>
         <label class="growth-control" for="growth-speed">
           <span>Growth</span>
           <output id="growth-speed-value" for="growth-speed">3</output>
@@ -70,6 +77,7 @@
           <span>Directed growth</span>
         </label>
       </div>
+      <p class="touch-gesture-guide">棋盘：左右滑移动 · 上滑旋转 · 下滑直接落下<br />在棋盘两侧或下方滑动，可滚动页面</p>
       <div class="touch-controls" aria-label="Touch controls">
         <button data-action="rotate-ccw" aria-label="Rotate counterclockwise">↺</button>
         <button data-action="rotate" aria-label="Rotate clockwise">↻</button>
@@ -106,11 +114,13 @@
       <button class="keybindings-open" data-open-keybindings type="button" aria-haspopup="dialog" aria-controls="keybindings-panel">
         KEY SETTINGS
       </button>
+      <label class="language-switcher language-choice">Language <select data-language-select aria-label="Language"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
       <button id="music-toggle" class="music-toggle" type="button" aria-pressed="true">♪ MUSIC ON</button>
       <button class="scores-open" data-open-scores type="button" aria-haspopup="dialog" aria-controls="score-history">SCORES</button>
       <dialog id="score-history" class="score-history" aria-labelledby="score-history-title" aria-describedby="score-storage-status">
         <div class="keybindings-header">
           <h2 id="score-history-title">SCORE HISTORY</h2>
+          <label class="language-choice">Language <select data-language-select aria-label="Language"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
           <button id="score-history-close" type="button" aria-label="Close score history" autofocus>×</button>
         </div>
         <section class="global-leaderboard" aria-labelledby="global-leaderboard-title">
@@ -126,8 +136,9 @@
           <p id="global-leaderboard-status" class="score-history-note" role="status">Open Scores to load the global leaderboard.</p>
           <ol id="global-top-three" class="leaderboard-list" aria-label="Global top three scores"></ol>
           <label class="player-name-field" for="scores-player-name">Nickname for your next game
-            <input id="scores-player-name" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" />
+            <input id="scores-player-name" aria-describedby="scores-nickname-status" data-player-name type="text" maxlength="24" placeholder="Player" autocomplete="nickname" autocapitalize="off" spellcheck="false" />
           </label>
+          <p id="scores-nickname-status" data-nickname-status class="nickname-status" role="status">留空将以 Player 参加排行榜。</p>
         </section>
         <h3 class="local-history-title">THIS DEVICE</h3>
         <p id="score-storage-status" class="score-history-note" role="status"></p>
@@ -162,6 +173,7 @@
         <div class="keybindings-card">
           <div class="keybindings-header">
             <h2 id="keybindings-title">KEY SETTINGS</h2>
+            <label class="language-choice">Language <select data-language-select aria-label="Language"><option value="zh-CN">中文</option><option value="en">English</option></select></label>
             <button id="keybindings-close" type="button" aria-label="Close key settings">×</button>
           </div>
           <p>Choose an action, then press a key. Conflicting bindings will be swapped.</p>

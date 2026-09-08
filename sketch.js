@@ -158,6 +158,7 @@ let musicControlsBound = false;
 let currentMusicTrackId = OPENING_MUSIC_TRACK_ID;
 const heldActions = new Set();
 let gameCanvas = null;
+let boardGestureSurface = null;
 let animationRequest = null;
 let lastFrameTime = null;
 let nextFrameTime = null;
@@ -165,6 +166,7 @@ let nextFrameTime = null;
 /** DOM 就绪后创建画布和控件；不等待音乐或外部绘图库。 */
 function setup() {
   gameCanvas = createGameCanvas();
+  boardGestureSurface = document.querySelector('.board-gesture-surface');
   cacheControls();
   initializeMusicControls();
   bindGrowthControls();
@@ -174,6 +176,7 @@ function setup() {
   initializeKeybindingControls();
   initializeScoreHistory();
   initializeGlobalLeaderboard();
+  initializeLanguage();
   window.addEventListener('keydown', (event) => {
     if (keyPressed(event) === false) event.preventDefault();
   });
@@ -191,6 +194,7 @@ function setup() {
 
 /** 空闲时只绘制一次；恢复时丢弃后台时间，避免补算下落或卡住长按。 */
 function syncGameLoop() {
+  boardGestureSurface?.classList.toggle('is-active', canUseBoardGesture());
   if (!gameCanvas) return;
   if (animationRequest !== null) cancelAnimationFrame(animationRequest);
   animationRequest = null;
@@ -237,11 +241,9 @@ function draw(frameElapsedMs = 0) {
   if (gameStarted && !gameOver && !gamePaused && !controlsSuspended) {
     const elapsedMs = Math.min(normalizeElapsedMs(frameElapsedMs), MAX_FRAME_ELAPSED_MS);
     handleHeldKeys(elapsedMs);
-    if (isGrowthFrozen()) {
-      updateFreezeTimer(elapsedMs);
-    } else if (!hardMode) {
-      currentPiece.updateGrowth();
-    }
+    const unfrozenElapsedMs = Math.max(0, elapsedMs - freezeRemainingMs);
+    if (isGrowthFrozen()) updateFreezeTimer(elapsedMs);
+    if (!hardMode) currentPiece.updateGrowth(unfrozenElapsedMs);
     updateFalling(elapsedMs);
     if (speedUpNoticeFrames > 0) speedUpNoticeFrames -= 1;
   }
@@ -251,6 +253,11 @@ function draw(frameElapsedMs = 0) {
     if (lineClearNotice.framesRemaining <= 0) lineClearNotice = null;
   }
 
+  paintGame();
+}
+
+/** 仅重绘当前状态，供切换语言使用，不推进任何游戏计时。 */
+function paintGame() {
   background(0);
   board.draw();
   if (!gameOver) {
@@ -351,7 +358,7 @@ class Piece {
     this.color = COLORS[type];
     this.shape = SHAPES[type].map(([x, y]) => [x, y]);
     this.rotationState = 0;
-    this.growthCounter = 0;
+    this.growthElapsedMs = 0;
     this.warning = null;
     positionPieceAtSpawn(this);
   }
@@ -482,13 +489,20 @@ class Piece {
       : [Math.round(pivotX + relativeY), Math.round(pivotY - relativeX)];
   }
 
-  /** 普通模式下按帧累计生长计时，先产生警告，再在周期结束时生长。 */
-  updateGrowth() {
-    const interval = getGrowthInterval();
-    this.growthCounter += 1;
-    if (!this.warning && this.growthCounter >= interval - GROWTH_WARNING_FRAMES) this.chooseWarning();
-    if (this.growthCounter >= interval) {
+  /** 用真实毫秒推进普通模式生长；帧率改变不改变周期或预警时长。 */
+  updateGrowth(elapsedMs = 0) {
+    const elapsed = Math.min(normalizeElapsedMs(elapsedMs), MAX_FRAME_ELAPSED_MS);
+    if (elapsed === 0) return;
+    const intervalMs = getGrowthInterval() * FRAME_INTERVAL_MS;
+    // 调快滑杆时最多立即完成一次生长，不把原来的长周期兑换成多次生长。
+    this.growthElapsedMs = Math.min(this.growthElapsedMs, intervalMs) + elapsed;
+    const warningAtMs = intervalMs - GROWTH_WARNING_FRAMES * FRAME_INTERVAL_MS;
+    if (!this.warning && this.growthElapsedMs + 1e-7 >= warningAtMs) this.chooseWarning();
+    if (this.growthElapsedMs + 1e-7 >= intervalMs) {
+      const remainderMs = Math.max(0, this.growthElapsedMs - intervalMs);
       this.commitWarningGrowth();
+      // 保留跨过周期边界的时间，避免 24/30 Hz 或抖动帧逐次累积误差。
+      this.growthElapsedMs = remainderMs;
     }
   }
 
@@ -499,7 +513,7 @@ class Piece {
       this.shape.push([...this.warning]);
     }
     this.warning = null;
-    this.growthCounter = 0;
+    this.growthElapsedMs = 0;
   }
 
   /** 判断局部坐标是否已经属于当前形状。 */
@@ -833,7 +847,7 @@ function saveMusicPreference() {
 /** 根据音乐开关更新按钮文字和无障碍按下状态。 */
 function updateMusicButton() {
   if (!musicToggleButton) return;
-  musicToggleButton.textContent = musicEnabled ? '♪ MUSIC ON' : '♪ MUSIC OFF';
+  setLocalizedText(musicToggleButton, musicEnabled ? '♪ MUSIC ON' : '♪ MUSIC OFF');
   musicToggleButton.setAttribute('aria-pressed', String(musicEnabled));
 }
 
@@ -1011,7 +1025,7 @@ function getActionForCode(code) {
 function updateDisplayedKeyLabels() {
   document.querySelectorAll('[data-key-action]').forEach((element) => {
     const code = keyBindings[element.dataset.keyAction];
-    if (code) element.textContent = formatKeyCode(code);
+    if (code) setLocalizedText(element, formatKeyCode(code));
   });
 }
 
@@ -1021,14 +1035,14 @@ function renderKeybindingsList() {
   keybindingsList.replaceChildren();
   KEY_BINDING_ACTIONS.forEach(([action, labelText]) => {
     const label = document.createElement('label');
-    label.textContent = labelText;
+    setLocalizedText(label, labelText);
     label.htmlFor = `keybinding-${action}`;
 
     const button = document.createElement('button');
     button.type = 'button';
     button.id = `keybinding-${action}`;
     button.dataset.keybindingAction = action;
-    button.textContent = bindingCaptureAction === action ? 'PRESS A KEY…' : formatKeyCode(keyBindings[action]);
+    setLocalizedText(button, bindingCaptureAction === action ? 'PRESS A KEY…' : formatKeyCode(keyBindings[action]));
     button.classList.toggle('is-listening', bindingCaptureAction === action);
     keybindingsList.append(label, button);
   });
@@ -1145,7 +1159,7 @@ function handleKeybindingKeyDown(event) {
 
 /** 绑定文档级指针和键盘监听器，统一处理全部改键界面操作。 */
 function bindKeybindingControls() {
-  document.addEventListener('pointerdown', handleKeybindingPointerDown);
+  document.addEventListener('click', handleKeybindingPointerDown);
   document.addEventListener('keydown', handleKeybindingKeyDown, true);
 }
 
@@ -1156,7 +1170,7 @@ function startGame() {
   beginScoreRun();
   fallElapsedMs = 0;
   resetInputTimers();
-  currentPiece.growthCounter = 0;
+  currentPiece.growthElapsedMs = 0;
   if (startScreen) {
     startScreen.classList.add('is-hidden');
     startScreen.setAttribute('aria-hidden', 'true');
@@ -1165,22 +1179,17 @@ function startGame() {
   syncGameLoop();
 }
 
-/** 为触屏设备绑定点击开始；桌面端继续使用空格键开始。 */
+/** 明确点击开始按钮，滚动说明页面不会误开局。 */
 function bindStartScreen() {
-  if (!startScreen) return;
-  startScreen.addEventListener('pointerdown', (event) => {
-    if (!usesTouchControls()) return;
-    if (event.target.closest('button, input, label')) return;
-    event.preventDefault();
-    startGame();
-  });
+  const button = document.querySelector('[data-start-game]');
+  if (button) bindTapControl(button, requestStartGame);
 }
 
 /** 根据模式和暂停状态刷新模式按钮、速度滑杆及定向生长控件。 */
 function updateModeButton() {
   if (modeButton) {
-    if (!hardMode) modeButton.textContent = 'START HARD MODE';
-    else modeButton.textContent = 'EXIT HARD MODE';
+    if (!hardMode) setLocalizedText(modeButton, 'START HARD MODE');
+    else setLocalizedText(modeButton, 'EXIT HARD MODE');
     modeButton.disabled = gamePaused && !gameOver;
   }
   if (speedSlider) speedSlider.disabled = hardMode || gamePaused;
@@ -1252,7 +1261,7 @@ function togglePause() {
 /** 根据当前暂停和结束状态更新暂停按钮的文字及可用性。 */
 function updatePauseButton() {
   if (!pauseButton) return;
-  pauseButton.textContent = gamePaused ? 'RESUME' : 'PAUSE';
+  setLocalizedText(pauseButton, gamePaused ? 'RESUME' : 'PAUSE');
   pauseButton.disabled = gameOver;
 }
 
@@ -1276,7 +1285,7 @@ function useFreezeItem() {
   freezeItems -= 1;
   freezeRemainingMs = FREEZE_DURATION_MS;
   currentPiece.warning = null;
-  currentPiece.growthCounter = 0;
+  currentPiece.growthElapsedMs = 0;
   hardOperationCount -= hardOperationCount % 4;
   updateFreezeButton();
   return true;
@@ -1289,7 +1298,7 @@ function updateFreezeButton() {
     ? `FROZEN ${(freezeRemainingMs / 1000).toFixed(1)}s`
     : `FREEZE ×${freezeItems}`;
   const disabled = gameOver || gamePaused || freezeItems <= 0 || isGrowthFrozen();
-  if (freezeButton.textContent !== label) freezeButton.textContent = label;
+  if (freezeButton.textContent !== t(label)) setLocalizedText(freezeButton, label);
   if (freezeButton.disabled !== disabled) freezeButton.disabled = disabled;
 }
 
@@ -1309,7 +1318,7 @@ function performOperation(action) {
   const growthBefore = hardMode ? {
     shape: currentPiece.shape.map(([x, y]) => [x, y]),
     warning: currentPiece.warning ? [...currentPiece.warning] : null,
-    growthCounter: currentPiece.growthCounter,
+    growthElapsedMs: currentPiece.growthElapsedMs,
   } : null;
 
   // 困难模式下，第一次有效操作显示警告格，第四次有效操作使其生长。
@@ -1334,7 +1343,7 @@ function performOperation(action) {
     if (growthBefore && currentPiece === pieceBefore) {
       currentPiece.shape = growthBefore.shape;
       currentPiece.warning = growthBefore.warning;
-      currentPiece.growthCounter = growthBefore.growthCounter;
+      currentPiece.growthElapsedMs = growthBefore.growthElapsedMs;
     }
     if (actionError) throw actionError;
     return false;
@@ -1389,13 +1398,13 @@ function drawInterface() {
   drawPanelTitle('Hold:', 20, 55);
   if (heldPiece) drawMiniShape(heldPiece.shape, COLORS[heldPiece.type], 20, 75, 15);
   if (!canHold) {
-    noStroke(); fill(150); textSize(10); text('USED', 20, 165);
+    noStroke(); fill(150); textSize(10); text(t('USED'), 20, 165);
   }
   noStroke();
   if (isGrowthFrozen()) fill(80, 190, 255);
   else fill(180);
   textSize(11);
-  text(isGrowthFrozen() ? `Frozen ${(freezeRemainingMs / 1000).toFixed(1)}s` : `Freeze ×${freezeItems}`, 20, 205);
+  text(t(isGrowthFrozen() ? `Frozen ${(freezeRemainingMs / 1000).toFixed(1)}s` : `Freeze ×${freezeItems}`), 20, 205);
 
   drawPanelTitle('Next:', 405, 55);
   nextQueue.forEach((type, index) => {
@@ -1407,10 +1416,10 @@ function drawInterface() {
   textAlign(LEFT, BASELINE);
   textStyle(NORMAL);
   textSize(20);
-  text(`Score: ${score}`, 30, 30);
+  text(t(`Score: ${score}`), 30, 30);
   textSize(14);
-  text(`Growth Lv: ${getGrowthLevel()}`, 385, 30);
-  text(hardMode ? `HARD ${hardOperationCount % 4 + 1}/4` : 'NORMAL', 205, 30);
+  text(t(`Growth Lv: ${getGrowthLevel()}`), 385, 30);
+  text(t(hardMode ? `HARD ${hardOperationCount % 4 + 1}/4` : 'NORMAL'), 205, 30);
 
   drawLineClearNotice();
 
@@ -1420,32 +1429,32 @@ function drawInterface() {
     textAlign(RIGHT, CENTER);
     textStyle(BOLD);
     textSize(13);
-    text('SPEED\nUP!', width - 7, BOARD_Y + 505);
+    text(t('SPEED\nUP!'), width - 7, BOARD_Y + 505);
     textStyle(NORMAL);
     textAlign(LEFT, BASELINE);
   }
 
   if (gameOver) {
     noStroke(); fill(0, 210); rect(BOARD_X, BOARD_Y + 220, COLS * CELL, 140);
-    textAlign(CENTER, CENTER); fill(255); textSize(28); text('GAME OVER', width / 2, BOARD_Y + 255);
+    textAlign(CENTER, CENTER); fill(255); textSize(28); text(t('GAME OVER'), width / 2, BOARD_Y + 255);
     textSize(14);
     if (hardMode) {
       if (usesTouchControls()) {
-        text('RESTART: Play hard mode again', width / 2, BOARD_Y + 300);
-        text('EXIT HARD MODE: Return to normal', width / 2, BOARD_Y + 330);
+        text(t('RESTART: Play hard mode again'), width / 2, BOARD_Y + 300);
+        text(t('EXIT HARD MODE: Return to normal'), width / 2, BOARD_Y + 330);
       } else {
-        text(`${formatKeyCode(keyBindings.restart)}: Play hard mode again`, width / 2, BOARD_Y + 300);
-        text(`${formatKeyCode(keyBindings.mode)}: Exit hard mode`, width / 2, BOARD_Y + 330);
+        text(t(`${formatKeyCode(keyBindings.restart)}: Play hard mode again`), width / 2, BOARD_Y + 300);
+        text(t(`${formatKeyCode(keyBindings.mode)}: Exit hard mode`), width / 2, BOARD_Y + 330);
       }
     } else {
-      text(usesTouchControls() ? 'Tap RESTART below' : `Press ${formatKeyCode(keyBindings.restart)} to restart`, width / 2, BOARD_Y + 310);
+      text(t(usesTouchControls() ? 'Tap RESTART below' : `Press ${formatKeyCode(keyBindings.restart)} to restart`), width / 2, BOARD_Y + 310);
     }
     textAlign(LEFT, BASELINE);
   } else if (gamePaused) {
     noStroke(); fill(0, 215); rect(BOARD_X, BOARD_Y + 235, COLS * CELL, 110);
-    textAlign(CENTER, CENTER); fill(255); textSize(28); text('PAUSED', width / 2, BOARD_Y + 270);
+    textAlign(CENTER, CENTER); fill(255); textSize(28); text(t('PAUSED'), width / 2, BOARD_Y + 270);
     textSize(13);
-    text(usesTouchControls() ? 'Tap RESUME below' : `Press ${formatKeyCode(keyBindings.pause)} to resume`, width / 2, BOARD_Y + 315);
+    text(t(usesTouchControls() ? 'Tap RESUME below' : `Press ${formatKeyCode(keyBindings.pause)} to resume`), width / 2, BOARD_Y + 315);
     textAlign(LEFT, BASELINE);
   }
 }
@@ -1467,9 +1476,9 @@ function drawLineClearNotice() {
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
   textSize(12);
-  text(labels[lineClearNotice.lines] || `${lineClearNotice.lines} LINES`, BOARD_X / 2, noticeY);
+  text(t(labels[lineClearNotice.lines] || `${lineClearNotice.lines} LINES`), BOARD_X / 2, noticeY);
   textSize(16);
-  text(`+${lineClearNotice.points}`, BOARD_X / 2, noticeY + 19);
+  text(t(`+${lineClearNotice.points}`), BOARD_X / 2, noticeY + 19);
   textStyle(NORMAL);
   textAlign(LEFT, BASELINE);
 }
@@ -1482,7 +1491,7 @@ function usesTouchControls() {
 
 /** 使用统一样式绘制暂存和预览面板标题。 */
 function drawPanelTitle(label, x, y) {
-  noStroke(); fill(255); textStyle(NORMAL); textSize(20); textAlign(LEFT, BASELINE); text(label, x, y);
+  noStroke(); fill(255); textStyle(NORMAL); textSize(20); textAlign(LEFT, BASELINE); text(t(label), x, y);
 }
 
 /** 将形状按自身最小坐标归一化后绘制为暂存或预览缩略图。 */
@@ -1513,6 +1522,7 @@ function resetSoftDropInputTimers() {
 
 /** 同时清空所有长按输入计时，供暂停和重新开局使用。 */
 function resetInputTimers() {
+  resetBoardGesture();
   resetHorizontalInputTimers();
   resetSoftDropInputTimers();
   heldActions.clear();
@@ -1596,7 +1606,7 @@ function handleHeldKeys(elapsedMs) {
 
 /** 绘图库的键盘按下入口：处理开始、模式、暂停、道具以及所有方块操作。 */
 function keyPressed(event) {
-  if (event?.target?.matches?.('input[type="text"], textarea') || event?.target?.isContentEditable) return undefined;
+  if (event?.target?.matches?.('input[type="text"], textarea, select') || event?.target?.isContentEditable) return undefined;
   if (scoreHistoryDialog?.open) return undefined;
   if (event?.target?.closest?.('[data-open-scores]') && ['Space', 'Enter'].includes(event.code)) return undefined;
   if (handleKeyCapture(event)) return false;
@@ -1610,7 +1620,7 @@ function keyPressed(event) {
   if (event?.repeat) return false;
 
   if (!gameStarted) {
-    if (action === 'drop') startGame();
+    if (action === 'drop') requestStartGame();
     return false;
   }
 
@@ -1630,7 +1640,7 @@ function keyPressed(event) {
 
 /** 绘图库的键盘松开入口：结束方向键长按并清空重复计时。 */
 function keyReleased(event) {
-  if (event?.target?.matches?.('input[type="text"], textarea') || event?.target?.isContentEditable) return undefined;
+  if (event?.target?.matches?.('input[type="text"], textarea, select') || event?.target?.isContentEditable) return undefined;
   if (scoreHistoryDialog?.open) return undefined;
   if (event?.target?.closest?.('[data-open-scores]') && ['Space', 'Enter'].includes(event.code)) return undefined;
   const action = getActionForCode(event?.code);
@@ -1641,14 +1651,105 @@ function keyReleased(event) {
   return false;
 }
 
-/** 将所有带操作属性的触屏按钮映射到与键盘相同的游戏操作。 */
+// A scroll/drag never activates a button; keyboard and assistive clicks still work.
+function bindTapControl(element, activate) {
+  let pointer = null;
+  let cancelled = false;
+  element.addEventListener('pointerdown', (event) => {
+    if (event.isPrimary === false) { cancelled = true; return; }
+    cancelled = event.button !== undefined && event.button !== 0;
+    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  const track = (event) => {
+    if (!pointer || pointer.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 10) cancelled = true;
+  };
+  element.addEventListener('pointermove', track, { passive: true });
+  element.addEventListener('pointerup', (event) => { track(event); pointer = null; });
+  element.addEventListener('pointercancel', () => { pointer = null; cancelled = true; });
+  element.addEventListener('click', (event) => {
+    if (event.detail !== 0 && cancelled) { event.preventDefault(); return; }
+    if (!element.disabled) activate(event);
+  });
+}
+
+let boardGesture = null;
+function resetBoardGesture() { boardGesture = null; }
+function canUseBoardGesture() {
+  return gameStarted && !gamePaused && !gameOver && !controlsSuspended && !document.hidden;
+}
+
+function beginBoardGesture(event) {
+  if (event.isPrimary === false) { resetBoardGesture(); return; }
+  if (!['touch', 'pen'].includes(event.pointerType) || !canUseBoardGesture()) return;
+  const bounds = gameCanvas.getBoundingClientRect();
+  const scale = bounds.width / 500;
+  const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+  if (x < BOARD_X * scale || x > (BOARD_X + COLS * CELL) * scale
+      || y < BOARD_Y * scale || y > (BOARD_Y + ROWS * CELL) * scale) return;
+  boardGesture = {
+    id: event.pointerId, startX: event.clientX, startY: event.clientY,
+    anchorX: event.clientX, step: Math.max(18, CELL * scale),
+    startedAt: event.timeStamp, piece: currentPiece, axis: null, counted: false,
+  };
+  try { (boardGestureSurface || gameCanvas).setPointerCapture(event.pointerId); } catch (_) { /* Implicit touch capture is sufficient. */ }
+}
+
+function moveBoardGesture(event) {
+  const gesture = boardGesture;
+  if (!gesture || event.pointerId !== gesture.id) return;
+  if (!canUseBoardGesture() || gesture.piece !== currentPiece) { resetBoardGesture(); return; }
+  const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
+  if (!gesture.axis) {
+    if (Math.abs(dx) >= 12 && Math.abs(dx) > Math.abs(dy) * 1.25) gesture.axis = 'horizontal';
+    else if (Math.abs(dy) >= 12 && Math.abs(dy) > Math.abs(dx) * 1.25) gesture.axis = 'vertical';
+    else return;
+  }
+  if (event.cancelable) event.preventDefault();
+  // Vertical actions commit only on release; cancelled gestures never drop a piece.
+  if (gesture.axis === 'vertical') return;
+  let distance = event.clientX - gesture.anchorX;
+  // Cap each move event to the board width, even for malformed/coalesced coordinates.
+  for (let step = 0; step < COLS && Math.abs(distance) >= gesture.step; step += 1) {
+    const direction = distance < 0 ? -1 : 1;
+    const moved = gesture.counted ? currentPiece.move(direction, 0)
+      : executeGameAction(direction < 0 ? 'left' : 'right');
+    if (moved) gesture.counted = true;
+    gesture.anchorX += direction * gesture.step;
+    distance = event.clientX - gesture.anchorX;
+  }
+}
+
+function endBoardGesture(event) {
+  const gesture = boardGesture;
+  if (!gesture || event.pointerId !== gesture.id) return;
+  moveBoardGesture(event);
+  const valid = boardGesture === gesture && canUseBoardGesture() && gesture.piece === currentPiece;
+  const dx = event.clientX - gesture.startX, dy = event.clientY - gesture.startY;
+  resetBoardGesture();
+  if (!valid) return;
+  if (gesture.axis === 'vertical') {
+    if (dy >= 48) executeGameAction('drop');
+    else if (dy <= -28) executeGameAction('rotate');
+  } else if (!gesture.axis && Math.hypot(dx, dy) <= 10 && event.timeStamp - gesture.startedAt < 500) {
+    executeGameAction('rotate');
+  }
+}
+
+/** The board reserves gameplay swipes; the surrounding canvas and page keep native scrolling. */
 function bindTouchControls() {
   document.querySelectorAll('[data-action]').forEach((button) => {
-    button.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      executeGameAction(button.dataset.action);
+    bindTapControl(button, () => {
+      if (!controlsSuspended && gameStarted) executeGameAction(button.dataset.action);
     });
   });
+  if (!boardGestureSurface) return;
+  boardGestureSurface.addEventListener('pointerdown', beginBoardGesture);
+  boardGestureSurface.addEventListener('pointermove', moveBoardGesture);
+  boardGestureSurface.addEventListener('pointerup', endBoardGesture);
+  boardGestureSurface.addEventListener('pointercancel', resetBoardGesture);
+  boardGestureSurface.addEventListener('lostpointercapture', resetBoardGesture);
+  document.addEventListener('pointerdown', (event) => { if (event.isPrimary === false) resetBoardGesture(); }, { passive: true });
 }
 
 if (typeof document.addEventListener === 'function') {

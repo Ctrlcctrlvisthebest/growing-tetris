@@ -1,19 +1,21 @@
+import { reviewNickname } from './nickname-policy.mjs';
+
 const MAX_BODY_BYTES = 2048;
 const MAX_SCORE = 10_000_000;
 
 class HttpError extends Error {
-  /** @param {number} status @param {string} message */
-  constructor(status, message) { super(message); this.status = status; }
+  /** @param {number} status @param {string} message @param {string} [code] */
+  constructor(status, message, code) { super(message); this.status = status; this.code = code; }
 }
 
 /** @param {Request} request */
-async function readScore(request) {
+async function readJSON(request) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
     throw new HttpError(415, 'Send application/json.');
   }
   if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) throw new HttpError(413, 'Request too large.');
   const reader = request.body?.getReader();
-  if (!reader) throw new HttpError(400, 'Score is required.');
+  if (!reader) throw new HttpError(400, 'JSON body is required.');
   let length = 0;
   const chunks = [];
   try {
@@ -34,6 +36,12 @@ async function readScore(request) {
   let data;
   try { data = JSON.parse(new TextDecoder().decode(bytes)); }
   catch (_) { throw new HttpError(400, 'Invalid JSON.'); }
+  return data;
+}
+
+/** @param {Request} request @param {Env} env */
+async function readScore(request, env) {
+  const data = await readJSON(request);
   if (!data || typeof data !== 'object'
       || typeof data.runId !== 'string' || !/^[a-zA-Z0-9_-]{8,128}$/.test(data.runId)
       || typeof data.playerName !== 'string' || data.playerName.trim() !== data.playerName
@@ -43,7 +51,9 @@ async function readScore(request) {
       || !['normal', 'hard'].includes(data.mode)) {
     throw new HttpError(400, 'Invalid score, nickname or mode.');
   }
-  return data;
+  const review = reviewNickname(data.playerName, env.NICKNAME_BLOCKLIST);
+  if (!review.allowed) throw new HttpError(422, review.message || 'Nickname not allowed.', review.code);
+  return { ...data, playerName: review.name };
 }
 
 /** @param {Env} env @param {string} mode */
@@ -54,7 +64,10 @@ async function topScores(env, mode) {
     ? env.DB.prepare(`SELECT ${columns} FROM scores ORDER BY score DESC, created_at ASC, run_id ASC LIMIT 3`)
     : env.DB.prepare(`SELECT ${columns} FROM scores WHERE mode = ? ORDER BY score DESC, created_at ASC, run_id ASC LIMIT 3`).bind(mode);
   const { results } = await query.all();
-  return { entries: results.map((row, index) => ({ rank: index + 1, ...row })) };
+  return { entries: results.map((row, index) => {
+    const review = reviewNickname(row.playerName, env.NICKNAME_BLOCKLIST);
+    return { rank: index + 1, ...row, playerName: review.allowed ? review.name : 'Player' };
+  }) };
 }
 
 /** @param {Request} request @param {Env} env */
@@ -78,13 +91,17 @@ async function handleRequest(request, env) {
     if (url.pathname === '/api/leaderboard' && request.method === 'GET') {
       return json(await topScores(env, url.searchParams.get('mode') || 'all'));
     }
-    if (url.pathname === '/api/scores' && request.method === 'POST') {
-      const { success } = await env.SCORE_LIMITER.limit({ key: `growing-tetris:${request.headers.get('CF-Connecting-IP') || 'local'}` });
+    if (['/api/scores', '/api/nickname/check'].includes(url.pathname) && request.method === 'POST') {
+      const { success } = await env.SCORE_LIMITER.limit({ key: `growing-tetris:${url.pathname}:${request.headers.get('CF-Connecting-IP') || 'local'}` });
       if (!success) {
         headers.set('Retry-After', '60');
         return json({ error: 'Please retry in a minute.' }, 429);
       }
-      const data = await readScore(request);
+      if (url.pathname === '/api/nickname/check') {
+        const payload = await readJSON(request);
+        return json(reviewNickname(payload?.playerName, env.NICKNAME_BLOCKLIST));
+      }
+      const data = await readScore(request, env);
       await env.DB.prepare('INSERT INTO scores (run_id, player_name, score, mode, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(run_id) DO NOTHING')
         .bind(data.runId, data.playerName, data.score, data.mode, Date.now()).run();
       const stored = await env.DB.prepare('SELECT player_name, score, mode FROM scores WHERE run_id = ?').bind(data.runId).first();
@@ -95,7 +112,7 @@ async function handleRequest(request, env) {
     }
     return json({ error: 'Not found.' }, 404);
   } catch (error) {
-    if (error instanceof HttpError) return json({ error: error.message }, error.status);
+    if (error instanceof HttpError) return json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
     console.error(JSON.stringify({ event: 'leaderboard_error', path: url.pathname }));
     return json({ error: 'Leaderboard temporarily unavailable.' }, 503);
   }
