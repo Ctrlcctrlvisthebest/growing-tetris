@@ -638,3 +638,6 @@ button, .touch-controls, .feedback-button { touch-action: manipulation; }
   .board-gesture-surface.is-active { pointer-events: auto; }
   .start-tips .touch-gesture-guide { margin: 0; text-align: left; }
 }
+
+.player-name-field[hidden], #toy-leaderboard-controls[hidden] { display: none; }
+#toy-leaderboard-controls select, #toy-leaderboard-controls button { min-height: 44px; font-size: 16px; margin: 4px; }

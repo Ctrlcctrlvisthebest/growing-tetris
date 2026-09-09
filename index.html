@@ -10,7 +10,9 @@
     <script src="renderer.js" defer></script>
     <script src="locale-config.js" defer></script>
     <script src="i18n.js" defer></script>
+    <script src="platform-config.js" defer></script>
     <script src="leaderboard-config.js" defer></script>
+    <script src="toy-leaderboard.js" defer></script>
     <script src="leaderboard.js" defer></script>
     <script src="score-history.js" defer></script>
     <script src="sketch.js" defer></script>
@@ -132,6 +134,12 @@
               <option value="hard">Hard</option>
             </select>
             <button id="global-leaderboard-refresh" type="button">Refresh</button>
+          </div>
+          <div id="toy-leaderboard-controls" hidden>
+            <label>Period <select id="toy-period" aria-label="Leaderboard period"><option value="all">All time</option><option value="month">This month</option><option value="week">This week</option><option value="day">Today</option></select></label>
+            <button id="toy-submit" type="button" disabled>Submit finished score</button>
+            <button id="toy-my-rank" type="button">My rank</button>
+            <p id="toy-account-status" class="score-history-note" role="status"></p>
           </div>
           <p id="global-leaderboard-status" class="score-history-note" role="status">Open Scores to load the global leaderboard.</p>
           <ol id="global-top-three" class="leaderboard-list" aria-label="Global top three scores"></ol>

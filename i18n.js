@@ -1,5 +1,20 @@
 const LANGUAGE_STORAGE_KEY = 'growing-tetris-language-v1';
 const ZH_TEXT = {
+  'Period': '周期', 'Leaderboard period': '榜单周期', 'All time': '总榜', 'This month': '月榜', 'This week': '周榜', 'Today': '日榜',
+  'Submit finished score': '提交已完成成绩', 'My rank': '我的排名',
+  'Toy leaderboard uses your Bilibili account. Finish a game, then open Scores to submit.': 'Toy 排行榜使用你的 B 站账号。完成对局后，打开成绩页提交。',
+  'Open this game on Bilibili Toy to use the platform leaderboard. Local play is available.': '请在哔哩哔哩 Toy 中打开游戏使用平台排行榜，当前仍可本地游玩。',
+  'Bilibili players · personal best · ties go to the first submission.': 'B 站玩家个人最高分，同分先到先得。',
+  'Finish a game in the selected mode to submit a score.': '完成所选模式的一局游戏后即可提交成绩。',
+  'Score ready. Submit with your currently logged-in Bilibili account.': '成绩已就绪，请使用当前登录的 B 站账号提交。',
+  'Submitting… Complete any Bilibili login or data confirmation prompt.': '提交中，请完成平台弹出的登录或数据确认。',
+  'Submission failed or was cancelled. Log in to Bilibili and retry; local history is preserved.': '提交失败或已取消，请登录 B 站后重试，本地历史已保留。',
+  'Score submitted. Bilibili keeps your personal best on this board.': '成绩已提交，平台保留你在该榜位的最高分。',
+  'This score exceeds the Toy limit (16,777,215). Local history is preserved.': '成绩超过 Toy 上限（16,777,215），本地历史已保留。',
+  'Sign in to Bilibili and retry My rank.': '请登录 B 站后重新查询我的排名。',
+  'Not ranked in this period.': '你尚未进入本周期榜单。',
+  'Rank': '排名', 'Score': '分数',
+
   'Language': '语言',
   'A TETRIS GAME THAT NEVER STOPS CHANGING': '一款在下落中不断生长的俄罗斯方块',
   'Leaderboard nickname': '排行榜昵称',
@@ -124,6 +139,7 @@ function setLanguage(language, persist = true) {
   if (typeof renderKeybindingsList === 'function') renderKeybindingsList();
   if (typeof updateDisplayedKeyLabels === 'function') updateDisplayedKeyLabels();
   if (typeof renderScoreHistory === 'function') renderScoreHistory();
+  if (typeof renderToyRankings === 'function' && isToyLeaderboard()) renderToyRankings();
   if (typeof lastGlobalEntries !== 'undefined' && lastGlobalEntries) renderGlobalLeaderboard(lastGlobalEntries);
   // Repaint an idle canvas without advancing the game, resetting timers or replacing a run.
   if (typeof gameCanvas !== 'undefined' && gameCanvas) paintGame();

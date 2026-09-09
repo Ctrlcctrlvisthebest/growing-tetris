@@ -9,10 +9,11 @@ if (toy && local) throw new Error('Toy builds must keep the production Cloudflar
 await rm(dist, { recursive: true, force: true });
 await mkdir(path.join(dist, 'assets/audio'), { recursive: true });
 // Explicit allowlist: never publish the repository, database, configuration or secrets.
-for (const file of ['index.html', 'style.css', 'renderer.js', 'sketch.js', 'score-history.js', 'leaderboard.js', 'i18n.js']) {
+for (const file of ['index.html', 'style.css', 'renderer.js', 'sketch.js', 'score-history.js', 'leaderboard.js', 'toy-leaderboard.js', 'i18n.js']) {
   await copyFile(path.join(root, file), path.join(dist, file));
 }
 await writeFile(path.join(dist, 'locale-config.js'), `window.GROWING_TETRIS_DEFAULT_LANGUAGE = '${toy ? 'zh-CN' : 'en'}';\n`);
+await writeFile(path.join(dist, 'platform-config.js'), `window.GROWING_TETRIS_LEADERBOARD = '${toy ? 'toy' : 'cloudflare'}';\n`);
 if (local) {
   // Local development uses the simulated D1 database, never the public leaderboard.
   await writeFile(path.join(dist, 'leaderboard-config.js'), "window.GROWING_TETRIS_API_BASE = '';\n");

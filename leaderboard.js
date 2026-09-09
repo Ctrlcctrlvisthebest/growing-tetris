@@ -1,3 +1,4 @@
+function isToyLeaderboard() { return window.GROWING_TETRIS_LEADERBOARD === 'toy'; }
 const PLAYER_NAME_KEY = 'growing-tetris-player-name-v1';
 const GLOBAL_SCORE_QUEUE_PREFIX = 'growing-tetris-global-pending-v1:';
 const pendingGlobalScores = new Map();
@@ -25,6 +26,7 @@ function renderNicknameFeedback(message, state = nicknameReview.state) {
 
 // Only a reviewed custom name becomes a public score identity. Offline play uses Player.
 function scorePlayerName() {
+  if (isToyLeaderboard()) return 'Player';
   const source = currentPlayerName();
   return nicknameReview.source === source && nicknameReview.state === 'allowed'
     ? nicknameReview.name : 'Player';
@@ -89,6 +91,7 @@ function nicknameInputChanged(input) {
 }
 
 function requestStartGame() {
+  if (isToyLeaderboard()) { if (!gameStarted && !controlsSuspended) startGame(); return; }
   if (gameStarted || controlsSuspended) return;
   const source = currentPlayerName();
   if (source === 'Player') {
@@ -133,6 +136,7 @@ function loadGlobalQueue() {
 }
 
 function queueGlobalScore(record) {
+  if (isToyLeaderboard()) { queueToyScore(record); return; }
   if (record.status !== 'completed') return;
   loadGlobalQueue();
   const payload = { runId: record.id, playerName: normalizePlayerName(record.playerName), score: record.score, mode: record.mode };
@@ -204,6 +208,7 @@ function renderGlobalLeaderboard(entries) {
 }
 
 function refreshGlobalLeaderboard() {
+  if (isToyLeaderboard()) return refreshToyLeaderboard();
   if (globalLeaderboardRequest) {
     globalRefreshRequested = true;
     return globalLeaderboardRequest;
@@ -248,6 +253,7 @@ function refreshGlobalLeaderboard() {
 }
 
 function initializeGlobalLeaderboard() {
+  if (isToyLeaderboard()) { initializeToyLeaderboard(); return; }
   const inputs = [...document.querySelectorAll('[data-player-name]')];
   const savedName = readLocalStorageItem(PLAYER_NAME_KEY) || '';
   for (const input of inputs) {
