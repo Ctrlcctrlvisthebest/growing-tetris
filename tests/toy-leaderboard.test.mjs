@@ -10,7 +10,7 @@ function setup(sdk = {}) {
     return nodes.get(id);
   }
   const calls = [];
-  const context = vm.createContext({ window: { toy: { isSupport: async () => true, getRankList: async () => [], ...sdk } }, document: { querySelector: node, createElement: () => node(Symbol()) }, setTimeout, clearTimeout, setLocalizedText: (el, text) => { el.textContent = text; }, t: s => s, languageLocale: () => 'en-US', calls });
+  const context = vm.createContext({ console: { warn() {} }, window: { toy: { isSupport: async () => true, getRankList: async () => [], ...sdk } }, document: { querySelector: node, createElement: () => node(Symbol()) }, setTimeout, clearTimeout, setLocalizedText: (el, text) => { el.textContent = text; }, t: s => s, languageLocale: () => 'en-US', calls });
   vm.runInContext(source, context);
   return { context, node, run: s => vm.runInContext(s, context) };
 }

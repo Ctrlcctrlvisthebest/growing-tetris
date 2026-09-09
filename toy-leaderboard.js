@@ -39,7 +39,7 @@ function toyReadWithTimeout(promise) {
 }
 async function toySdkFor(ability) {
   const sdk = await loadToySdk();
-  if (typeof sdk[ability] !== 'function' || !await toyReadWithTimeout(sdk.isSupport(ability))) throw new Error('Unsupported Toy capability');
+  if (typeof sdk[ability] !== 'function' || !await toyReadWithTimeout(sdk.isSupport(ability))) throw Object.assign(new Error('Unsupported Toy capability'), { code: 'TOY_UNSUPPORTED' });
   return sdk;
 }
 function toyAccountStatus(message) { setLocalizedText(document.querySelector('#toy-account-status'), message); }
@@ -117,11 +117,14 @@ async function refreshToyLeaderboard() {
     toyRankEntries = entries;
     renderToyRankings();
     setLocalizedText(status, 'Bilibili players · personal best · ties go to the first submission.');
-  } catch (_) {
+  } catch (error) {
+    console.warn('Toy leaderboard read failed', error?.code, error?.message);
     if (version !== toyReadVersion) return;
     toyRankEntries = [];
     renderToyRankings();
-    setLocalizedText(status, 'Open this game on Bilibili Toy to use the platform leaderboard. Local play is available.');
+    setLocalizedText(status, error?.code === 'TOY_UNSUPPORTED'
+      ? 'Open this game on Bilibili Toy to use the platform leaderboard. Local play is available.'
+      : 'Global leaderboard unavailable. Use Refresh to retry. Your local history is still available.');
   }
 }
 async function readToyMyRank() {

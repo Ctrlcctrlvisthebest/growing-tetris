@@ -18,7 +18,7 @@ if (local) {
   // Local development uses the simulated D1 database, never the public leaderboard.
   await writeFile(path.join(dist, 'leaderboard-config.js'), "window.GROWING_TETRIS_API_BASE = '';\n");
 } else {
-  // GitHub Pages and Toy use the same explicit Cloudflare API endpoint.
+  // Preserve the Cloudflare endpoint; platform-config selects Toy rankings separately.
   await copyFile(path.join(root, 'leaderboard-config.js'), path.join(dist, 'leaderboard-config.js'));
 }
 for (const file of await readdir(path.join(root, 'assets/audio'))) {
